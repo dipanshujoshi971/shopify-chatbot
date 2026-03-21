@@ -25,3 +25,49 @@ export interface PlanFeatures {
   hasPlayground: boolean;
   hasAnalytics: boolean;
 }
+
+// ─── Conversations & Messages ─────────────────────────────────────────────────
+
+export type MessageRole = 'user' | 'assistant' | 'tool';
+
+export type ConversationStatus = 'active' | 'resolved' | 'escalated';
+
+export interface Conversation {
+  id: string;
+  tenantId: string;
+  sessionId: string;
+  status: ConversationStatus;
+  totalTokensUsed: number;
+  totalTurns: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Message {
+  id: string;
+  conversationId: string;
+  role: MessageRole;
+  content: MessageContent;
+  createdAt: Date;
+}
+
+// A message can contain different types of content
+export type MessageContent =
+  | { type: 'text'; text: string }
+  | { type: 'product_carousel'; products: ProductCard[] }
+  | { type: 'order_status'; order: OrderStatusCard };
+
+export interface ProductCard {
+  shopifyProductId: string;
+  title: string;
+  price: string;
+  imageUrl: string;
+}
+
+export interface OrderStatusCard {
+  orderId: string;
+  orderNumber: string;
+  status: 'processing' | 'shipped' | 'out_for_delivery' | 'delivered';
+  trackingNumber?: string;
+  estimatedDelivery?: string;
+}
