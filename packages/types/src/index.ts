@@ -71,3 +71,40 @@ export interface OrderStatusCard {
   trackingNumber?: string;
   estimatedDelivery?: string;
 }
+
+// ─── Agent Config ─────────────────────────────────────────────────────────────
+
+export type AgentTone = 'professional' | 'friendly' | 'casual';
+
+export type ResponseLength = 'short' | 'medium' | 'detailed';
+
+export interface AgentConfig {
+  tenantId: string;
+  botName: string;
+  avatarUrl?: string;
+  tone: AgentTone;
+  customInstructions?: string;
+  blockedTopics: string[];
+  responseLength: ResponseLength;
+  useEmojis: boolean;
+}
+
+// ─── API Responses ────────────────────────────────────────────────────────────
+// Every API endpoint returns one of these two shapes.
+// The dashboard always checks response.success before using response.data
+
+export interface ApiSuccess<T> {
+  success: true;
+  data: T;
+}
+
+export interface ApiError {
+  success: false;
+  error: {
+    code: string;
+    message: string;
+    statusCode: number;
+  };
+}
+
+export type ApiResponse<T> = ApiSuccess<T> | ApiError;
