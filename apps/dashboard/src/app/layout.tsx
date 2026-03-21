@@ -1,20 +1,16 @@
-import { ClerkProvider, SignInButton, SignUpButton, Show, UserButton } from "@clerk/nextjs";
+import { ClerkProvider } from "@clerk/nextjs";
+import { ui } from "@clerk/ui";
 import "@/globals.css";
+import { Geist } from "next/font/google";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({ subsets: ['latin'], variable: '--font-sans' });
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={cn("font-sans", geist.variable)}>
       <body>
-        <ClerkProvider>
-          <header>
-            <Show when="signed-out">
-              <SignInButton />
-              <SignUpButton />
-            </Show>
-            <Show when="signed-in">
-              <UserButton />
-            </Show>
-          </header>
+        <ClerkProvider ui={ui}>
           {children}
         </ClerkProvider>
       </body>
