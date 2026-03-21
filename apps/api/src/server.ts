@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import { env } from './env.js';
 import { logger } from './logger.js';
 import { valkey } from './valkey.js';
+import authRoutes from './routes/auth.js';
 
 const app = Fastify({
   loggerInstance: logger,
@@ -26,6 +27,8 @@ await app.register(cors, {
   origin: env.ALLOWED_ORIGINS.split(','),
   credentials: true,
 });
+
+await app.register(authRoutes);
 
 // ─── Health Routes ────────────────────────────────────────────────────────────
 
