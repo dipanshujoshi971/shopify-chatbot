@@ -1,0 +1,17 @@
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: chatbot_valkey
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    command: valkey-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  valkey_data:
