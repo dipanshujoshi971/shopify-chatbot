@@ -6,8 +6,8 @@ import { z } from 'zod';
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'staging', 'production']).default('development'),
   PORT: z.coerce.number().default(3001),
-  HOST: z.string().default('0.0.0.0'),        // for Fastify binding
-  APP_URL: z.string().default('http://localhost:3001'), // for building URLs
+  HOST: z.string().default('0.0.0.0'),
+  APP_URL: z.string().default('http://localhost:3001'),
 
   // Database
   DATABASE_URL: z.string().url(),
@@ -17,11 +17,14 @@ const envSchema = z.object({
 
   // CORS
   ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
- 
+
   // Shopify
   SHOPIFY_CLIENT_ID: z.string(),
   SHOPIFY_CLIENT_SECRET: z.string(),
-  SHOPIFY_SCOPES: z.string().default('read_products,write_products,read_orders,write_script_tags,read_customers'),
+  // write_webhooks required to register per-merchant webhook subscriptions via API
+  SHOPIFY_SCOPES: z.string().default(
+    'read_products,write_products,read_orders,write_script_tags,read_customers,write_webhooks'
+  ),
 });
 
 function validateEnv() {

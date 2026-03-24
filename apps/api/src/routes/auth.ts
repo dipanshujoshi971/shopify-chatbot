@@ -11,6 +11,7 @@ import {
   verifyShopifyHmac,
   isValidShopDomain,
   encryptToken,
+  registerWebhooks,
 } from '../lib/shopify.js';
 
 const authRoutes: FastifyPluginAsync = async (app) => {
@@ -45,7 +46,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Invalid shop domain' });
     }
 
-    // 3 — Verify state
+    // 3 — Verify state (CSRF protection)
     const storedShop = await valkey.get(`oauth_state:${state}`);
     if (!storedShop || storedShop !== shop) {
       request.log.warn({ shop, state }, 'State mismatch on Shopify callback');
@@ -53,11 +54,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     }
     await valkey.del(`oauth_state:${state}`);
 
-    // 4 — Exchange code for token
+    // 4 — Exchange code for raw access token
     const accessToken = await exchangeCodeForToken(shop, code);
+
+    // 5 — Register webhooks (use raw token — needed for Admin API call)
+    try {
+      await registerWebhooks(shop, accessToken);
+      request.log.info({ shop }, 'Webhooks registered');
+    } catch (err) {
+      // Log but don't fail the install — webhooks can be retried later
+      request.log.warn({ shop, err }, 'Failed to register some webhooks');
+    }
+
+    // 6 — Encrypt token for storage
     const encryptedToken = encryptToken(accessToken);
 
-    // 5 — Save merchant to Postgres
+    // 7 — Save merchant to Postgres
     const { db } = createDbClient(env.DATABASE_URL);
 
     const merchantId = `store_${shop.replace('.myshopify.com', '').replace(/[^a-z0-9]/g, '_')}`;
@@ -69,19 +81,23 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       status: 'active',
       planId: 'starter',
       publishableApiKey,
+      encryptedShopifyToken: encryptedToken,
     }).onConflictDoUpdate({
       target: merchants.shopDomain,
       set: {
         status: 'active',
+        encryptedShopifyToken: encryptedToken, // refresh token on re-install
+        frozenAt: null,                        // unfreeze if was previously frozen
         updatedAt: new Date(),
       },
     });
 
-    // 6 — Create tenant schema — uses raw postgres, no drizzle version conflict
-    await provisionTenantSchema(env.DATABASE_URL, merchantId.replace('store_', ''));
-    request.log.info({ shop, merchantId }, 'Tenant schema created');
+    // 8 — Provision tenant schema + all tables
+    const storeId = merchantId.replace('store_', '');
+    await provisionTenantSchema(env.DATABASE_URL, storeId);
+    request.log.info({ shop, merchantId }, 'Tenant schema provisioned');
 
-    // 7 — Write audit log
+    // 9 — Write audit log
     await db.insert(auditLog).values({
       id: nanoid(),
       tenantId: merchantId,
@@ -90,9 +106,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       metadata: JSON.stringify({ shop, plan: 'starter' }),
     });
 
-    request.log.info({ shop, merchantId }, 'Merchant saved to Postgres');
+    request.log.info({ shop, merchantId }, 'OAuth complete — merchant ready');
 
-    // 8 — Redirect to dashboard
     return reply.redirect(`${env.ALLOWED_ORIGINS}/dashboard?shop=${shop}`);
   });
 
