@@ -11,6 +11,8 @@ export function createTenantSchema(storeId: string) {
     price: text('price').notNull(),
     imageUrl: text('image_url'),
     inStock: boolean('in_stock').notNull().default(true),
+    // Embedding model version — needed to detect stale vectors on model upgrade
+    modelVersion: text('model_version'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   }, (table) => [
@@ -20,6 +22,7 @@ export function createTenantSchema(storeId: string) {
   const conversations = schema.table('conversations', {
     id: text('id').primaryKey(),
     sessionId: text('session_id').notNull(),
+    customerId: text('customer_id'),
     status: text('status').notNull().default('active'),
     totalTokensUsed: integer('total_tokens_used').notNull().default(0),
     totalTurns: integer('total_turns').notNull().default(0),
@@ -49,7 +52,30 @@ export function createTenantSchema(storeId: string) {
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   });
 
-  return { products, conversations, messages, agentConfig };
+  const supportTickets = schema.table('support_tickets', {
+    id: text('id').primaryKey(),
+    conversationId: text('conversation_id'),
+    customerEmail: text('customer_email').notNull(),
+    customerMessage: text('customer_message').notNull(),
+    status: text('status').notNull().default('open'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  }, (table) => [
+    index('support_tickets_status_idx').on(table.status),
+  ]);
+
+  // Per-tenant webhook dedup — idempotency for Shopify product/inventory webhooks
+  const webhookEvents = schema.table('webhook_events', {
+    id: text('id').primaryKey(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    source: text('source').notNull(),
+    eventType: text('event_type').notNull(),
+    processedAt: timestamp('processed_at').notNull().defaultNow(),
+  }, (table) => [
+    uniqueIndex('webhook_events_idempotency_key_idx').on(table.idempotencyKey),
+  ]);
+
+  return { products, conversations, messages, agentConfig, supportTickets, webhookEvents };
 }
 
 export type TenantTables = ReturnType<typeof createTenantSchema>;

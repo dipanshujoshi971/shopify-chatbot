@@ -5,8 +5,8 @@ export type TenantStatus = 'active' | 'frozen' | 'deleted';
 export type PlanId = 'starter' | 'growth' | 'pro' | 'enterprise';
 
 export interface Tenant {
-  id: string;                    // store_{shopify_store_id}
-  shopDomain: string;            // e.g. my-store.myshopify.com
+  id: string;                    
+  shopDomain: string;           
   status: TenantStatus;
   planId: PlanId;
   clerkOrgId: string;
