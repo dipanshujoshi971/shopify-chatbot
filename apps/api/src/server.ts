@@ -6,13 +6,12 @@ import { logger } from './logger.js';
 import { valkey } from './valkey.js';
 import authRoutes from './routes/auth.js';
 import webhookRoutes from './routes/webhooks.js';
+import { socketIoPlugin } from './plugins/socket.js'; // <-- Added import
 
 const app = Fastify({
   loggerInstance: logger,
   requestIdHeader: 'x-request-id',
   requestIdLogLabel: 'requestId',
-  // Bakes tenant_id into every log line for that request.
-  // In Phase 2 this will switch from header to decoded JWT.
   childLoggerFactory: (logger, bindings, opts, rawReq) => {
     const tenantId =
       (rawReq as any).headers?.['x-tenant-id'] ?? 'unknown';
@@ -29,22 +28,20 @@ await app.register(cors, {
   credentials: true,
 });
 
+// Register Socket.io before routes, so auth/webhooks could potentially use app.io
+await app.register(socketIoPlugin);
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 await app.register(authRoutes);
-
-// Webhook routes need raw body access for HMAC verification.
-// They register their own JSON content type parser scoped to this plugin.
 await app.register(webhookRoutes);
 
 // ─── Health Routes ────────────────────────────────────────────────────────────
 
-// ALB uses /healthz to know the container exists (no dependency checks)
 app.get('/healthz', async () => {
   return { status: 'ok' };
 });
 
-// ALB uses /readyz before routing traffic — checks actual dependencies
 app.get('/readyz', async (request, reply) => {
   try {
     const result = await valkey.ping();
@@ -62,7 +59,7 @@ app.get('/readyz', async (request, reply) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 try {
-  await valkey.connect();
+  await valkey.connect(); // Connects the main Valkey instance
   await app.listen({ port: env.PORT, host: env.HOST });
   logger.info(`Server running on port ${env.PORT}`);
 } catch (err) {
