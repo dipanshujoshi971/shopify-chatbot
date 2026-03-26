@@ -7,6 +7,8 @@ import { valkey } from './valkey.js';
 import authRoutes from './routes/auth.js';
 import webhookRoutes from './routes/webhooks.js';
 import { socketIoPlugin } from './plugins/socket.js'; // <-- Added import
+import widgetAuthPlugin from './plugins/widgetAuth.js';
+import chatRoutes from './routes/widget/chat.js'; 
 
 const app = Fastify({
   loggerInstance: logger,
@@ -35,6 +37,14 @@ await app.register(socketIoPlugin);
 
 await app.register(authRoutes);
 await app.register(webhookRoutes);
+
+await app.register(
+  async (widgetScope) => {
+    await widgetScope.register(widgetAuthPlugin, { valkey });
+    await widgetScope.register(chatRoutes);
+  },
+  { prefix: '/widget' },
+);
 
 // ─── Health Routes ────────────────────────────────────────────────────────────
 
