@@ -2,8 +2,9 @@ import type { FastifyPluginAsync } from 'fastify';
 import crypto from 'crypto';
 import { nanoid } from 'nanoid';
 import { valkey } from '../valkey.js';
-import { createDbClient, provisionTenantSchema } from '@chatbot/db';
+import { provisionTenantSchema } from '@chatbot/db';
 import { merchants, auditLog } from '@chatbot/db';
+import { db } from '../db.js';              // ← singleton, no per-request pool
 import { env } from '../env.js';
 import {
   buildInstallUrl,
@@ -62,33 +63,30 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       await registerWebhooks(shop, accessToken);
       request.log.info({ shop }, 'Webhooks registered');
     } catch (err) {
-      // Log but don't fail the install — webhooks can be retried later
       request.log.warn({ shop, err }, 'Failed to register some webhooks');
     }
 
     // 6 — Encrypt token for storage
     const encryptedToken = encryptToken(accessToken);
 
-    // 7 — Save merchant to Postgres
-    const { db } = createDbClient(env.DATABASE_URL);
-
-    const merchantId = `store_${shop.replace('.myshopify.com', '').replace(/[^a-z0-9]/g, '_')}`;
+    // 7 — Upsert merchant using the singleton db (no new pool created)
+    const merchantId        = `store_${shop.replace('.myshopify.com', '').replace(/[^a-z0-9]/g, '_')}`;
     const publishableApiKey = `pk_${nanoid(32)}`;
 
     await db.insert(merchants).values({
-      id: merchantId,
-      shopDomain: shop,
-      status: 'active',
-      planId: 'starter',
+      id:                    merchantId,
+      shopDomain:            shop,
+      status:                'active',
+      planId:                'starter',
       publishableApiKey,
       encryptedShopifyToken: encryptedToken,
     }).onConflictDoUpdate({
       target: merchants.shopDomain,
       set: {
-        status: 'active',
-        encryptedShopifyToken: encryptedToken, // refresh token on re-install
-        frozenAt: null,                        // unfreeze if was previously frozen
-        updatedAt: new Date(),
+        status:                'active',
+        encryptedShopifyToken: encryptedToken,
+        frozenAt:              null,
+        updatedAt:             new Date(),
       },
     });
 
@@ -99,15 +97,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     // 9 — Write audit log
     await db.insert(auditLog).values({
-      id: nanoid(),
+      id:       nanoid(),
       tenantId: merchantId,
-      actor: 'system',
-      action: 'tenant.created',
+      actor:    'system',
+      action:   'tenant.created',
       metadata: JSON.stringify({ shop, plan: 'starter' }),
     });
 
     request.log.info({ shop, merchantId }, 'OAuth complete — merchant ready');
-
     return reply.redirect(`${env.ALLOWED_ORIGINS}/dashboard?shop=${shop}`);
   });
 

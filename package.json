@@ -6,16 +6,16 @@
     "packages/*"
   ],
   "scripts": {
-  "dev": "docker compose up -d && turbo run dev",
-  "dev:stop": "turbo run dev --stop && docker compose down",
-  "build": "turbo run build",
-  "lint": "turbo run lint",
-  "typecheck": "turbo run typecheck",
-  "test": "turbo run test",
-  "infra:up": "docker compose up -d",
-  "infra:down": "docker compose down",
-  "infra:logs": "docker compose logs -f valkey"
-},
+    "dev": "docker compose up -d && turbo run dev",
+    "dev:stop": "turbo run dev --stop && docker compose down",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:logs": "docker compose logs -f valkey"
+  },
   "devDependencies": {
     "@types/node": "^22.10.1",
     "prettier": "^3.4.2",
@@ -27,6 +27,7 @@
     "npm": ">=10.0.0"
   },
   "dependencies": {
-    "dotenv": "^17.3.1"
+    "dotenv": "^17.3.1",
+    "postgres": "^3.4.8"
   }
 }

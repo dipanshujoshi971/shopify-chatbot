@@ -1,15 +1,19 @@
-// Builds the Claude system prompt from the tenant's agent_config row.
-// Called once per chat request — cheap string operation.
+/**
+ * apps/api/src/lib/systemPrompt.ts
+ *
+ * Builds the Claude system prompt from the tenant's agent_config row.
+ * Called once per chat request — cheap string operation.
+ */
 
 export interface AgentConfigForPrompt {
-  botName: string;
-  tone: string;                    // 'professional' | 'friendly' | 'casual'
+  botName:            string;
+  tone:               string;   // 'professional' | 'friendly' | 'casual'
   customInstructions: string | null;
-  useEmojis: boolean;
+  useEmojis:          boolean;
 }
 
 export function buildSystemPrompt(
-  config: AgentConfigForPrompt,
+  config:     AgentConfigForPrompt,
   shopDomain: string,
 ): string {
   const toneGuide: Record<string, string> = {
@@ -18,7 +22,7 @@ export function buildSystemPrompt(
     casual:       'Be relaxed and informal — like texting a knowledgeable friend.',
   };
 
-  const tone     = toneGuide[config.tone] ?? toneGuide.friendly;
+  const tone      = toneGuide[config.tone] ?? toneGuide.friendly;
   const emojiRule = config.useEmojis
     ? 'You may use relevant emojis to add warmth.'
     : 'Do not use emojis.';
@@ -26,25 +30,28 @@ export function buildSystemPrompt(
   const lines = [
     `You are ${config.botName}, a shopping assistant for the store at ${shopDomain}.`,
     '',
-    `## Tone`,
+    '## Tone',
     tone,
     emojiRule,
     '',
-    `## Tools — always use them, never guess`,
-    '- search_products   → customer asks about products, items, or what you carry',
-    '- get_order_status  → customer asks about their order, delivery, or tracking',
-    '- search_knowledge  → customer has a general question about the store or policies',
-    '- collect_email     → you cannot resolve the issue and the customer needs human help',
+    '## Tools — always use them, never guess',
+    '- search_shop_catalog           → customer asks about products, items, or recommendations',
+    '- search_shop_policies_and_faqs → shipping, returns, policies, warranties, or general FAQs',
+    '- get_order_status              → order location, delivery status, or tracking info',
+    '- update_cart / get_cart        → add, view, or change cart items',
+    '- collect_email                 → issue is unresolvable; customer needs a human to follow up',
     '',
-    `## Rules`,
-    '- NEVER invent product names, prices, stock levels, or order details',
-    '- If a tool returns no results, say so honestly and offer an alternative',
+    '## Rules',
+    '- NEVER invent product names, prices, stock levels, variant IDs, or order details',
+    '- If a tool returns no results, say so honestly and offer an alternative action',
     '- Keep responses concise — the customer is on a shopping page, not reading an essay',
     '- If the customer is frustrated or the issue is complex, use collect_email immediately',
+    '- When helping with cart operations, confirm the exact product variant before adding',
+    '- Present product URLs as Markdown links so customers can navigate directly to them',
   ];
 
   if (config.customInstructions?.trim()) {
-    lines.push('', `## Store-specific instructions`, config.customInstructions.trim());
+    lines.push('', '## Store-specific instructions', config.customInstructions.trim());
   }
 
   return lines.join('\n');
