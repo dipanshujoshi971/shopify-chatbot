@@ -1,0 +1,27 @@
+{
+  "name": "@chatbot/widget",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight Preact chat widget for Shopify storefronts (<30KB gzip)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch --mode development",
+    "build": "vite build",
+    "build:analyze": "vite build --mode analyze",
+    "typecheck": "tsc --noEmit",
+    "size": "node -e \"const fs=require('fs');const s=fs.statSync('dist/widget.iife.js');console.log('Raw:',Math.round(s.size/1024)+'KB');\" && gzip -k dist/widget.iife.js && node -e \"const fs=require('fs');const s=fs.statSync('dist/widget.iife.js.gz');console.log('Gzip:',Math.round(s.size/1024)+'KB');\" && rm dist/widget.iife.js.gz",
+    "test": "vitest",
+    "test:e2e": "node scripts/test-server.js"
+  },
+  "dependencies": {
+    "preact": "^10.24.3"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.5",
+    "rollup-plugin-visualizer": "^5.14.0",
+    "terser": "^5.46.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.9",
+    "vitest": "^2.1.8"
+  }
+}
