@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Copy, Check, ExternalLink, Code2, Key } from 'lucide-react';
+import { Copy, Check, ExternalLink, Code2, Key, AlertCircle } from 'lucide-react';
 
 interface Merchant {
   shopDomain: string;
@@ -44,10 +44,14 @@ export default function WidgetPage() {
     </div>
   );
 
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'https://api.yourapp.com';
+  // NEXT_PUBLIC_API_URL must be set in your .env.local / deployment config.
+  // Example:  NEXT_PUBLIC_API_URL=https://api.yourapp.com
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL;
+  const apiUrlMissing = !apiBaseUrl;
+  const displayUrl = apiBaseUrl ?? 'https://api.yourapp.com';
 
   const embedCode = `<script
-  src="${apiBaseUrl}/widget.iife.js"
+  src="${displayUrl}/widget.iife.js"
   data-api-key="${merchant.publishableApiKey}"
   data-shop-domain="{{ shop.permanent_domain }}"
   data-title="{{ shop.name }}"
@@ -57,6 +61,24 @@ export default function WidgetPage() {
 
   return (
     <div className="max-w-2xl space-y-5">
+
+      {/* Missing env warning */}
+      {apiUrlMissing && (
+        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800">
+              NEXT_PUBLIC_API_URL not set
+            </p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Add <code className="bg-amber-100 px-1 rounded">NEXT_PUBLIC_API_URL=https://your-api-domain.com</code> to
+              your <code className="bg-amber-100 px-1 rounded">.env.local</code> file so the embed code
+              points to your live API server.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* API Key */}
       <div className="bg-white rounded-xl border border-zinc-200 p-5">
         <div className="flex items-center gap-2 mb-4">
@@ -87,7 +109,8 @@ export default function WidgetPage() {
           <code>{embedCode}</code>
         </pre>
         <p className="text-xs text-zinc-400 mt-3">
-          Paste this snippet just before the closing <code className="bg-zinc-100 px-1 rounded">&lt;/body&gt;</code> tag
+          Paste this snippet just before the closing{' '}
+          <code className="bg-zinc-100 px-1 rounded">&lt;/body&gt;</code> tag
           in your Shopify theme's <strong>theme.liquid</strong> file.
         </p>
       </div>

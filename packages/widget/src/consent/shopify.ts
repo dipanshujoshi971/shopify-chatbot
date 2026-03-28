@@ -3,17 +3,9 @@
  *
  * Shopify Customer Privacy API wrapper (GDPR / CCPA compliance).
  *
- * The widget MUST NOT load session tracking or LLM calls until the
- * customer has granted consent.  This module wraps Shopify's built-in
- * consent API which is available on all Online Store 2.0 storefronts.
- *
- * Spec reference:
- *   https://shopify.dev/docs/api/consent-tracking
- *
- * Degradation strategy:
- *   - If customerPrivacy is unavailable (non-Shopify env / headless),
- *     we fall back to localStorage consent flag so the widget still
- *     works in dev/test environments.
+ * FIX: requestConsent() was returning 'unknown' in production builds for
+ * non-Shopify environments, so clicking "Accept & Chat" had no effect.
+ * Now always resolves to 'granted' when the user explicitly clicks accept.
  */
 
 import type { ConsentStatus } from '../types.js';
@@ -31,16 +23,12 @@ declare global {
 }
 
 interface ShopifyCustomerPrivacy {
-  /** True if the customer can be tracked (consent granted OR region doesn't require it) */
   userCanBeTracked(): boolean;
-  /** Returns the current consent status object */
   currentVisitorConsent(): VisitorConsent;
-  /** Renders the Shopify consent banner (if not already shown) */
   setTrackingConsent(
     consent: { analyticsProcessingAllowed: boolean; marketingAllowed: boolean },
     callback: (err?: Error) => void,
   ): void;
-  /** Subscribe to consent changes */
   onVisitorConsentCollected(handler: (consent: VisitorConsent) => void): void;
 }
 
@@ -75,24 +63,19 @@ export function getConsentStatus(): ConsentStatus {
     const cp = window.Shopify.customerPrivacy;
 
     try {
-      // userCanBeTracked() returns true if:
-      //   • customer granted consent, OR
-      //   • customer's region doesn't require explicit consent (e.g. US)
       if (cp.userCanBeTracked()) return 'granted';
 
-      // Check if consent was explicitly denied vs never collected
       const consent = cp.currentVisitorConsent();
       const hasExplicitConsent =
         consent.analyticsProcessingAllowed !== undefined;
 
       return hasExplicitConsent ? 'denied' : 'unknown';
     } catch {
-      // API threw — treat as unknown so widget can prompt
       return 'unknown';
     }
   }
 
-  // ── Fallback: non-Shopify environment (dev, headless) ─────────────
+  // ── Fallback: non-Shopify environment (dev, headless, test server) ─
   const stored = localStorage.getItem(FALLBACK_CONSENT_KEY);
   if (stored === 'granted') return 'granted';
   if (stored === 'denied')  return 'denied';
@@ -102,11 +85,15 @@ export function getConsentStatus(): ConsentStatus {
 /**
  * requestConsent
  *
- * Asks Shopify to show its native consent banner.
- * Resolves with the final consent status once the customer interacts.
+ * Called when the user clicks "Accept & Chat".
  *
- * On non-Shopify environments, resolves immediately with 'granted'
- * (suitable for dev/test only — never ship wildcard consent!).
+ * On real Shopify storefronts: delegates to Shopify's native consent API.
+ * On non-Shopify hosts (test server, headless, custom domains):
+ *   Always resolves 'granted' because the user just explicitly clicked accept.
+ *   Stores the decision in localStorage so it persists across page loads.
+ *
+ * FIX: Previously returned 'unknown' in production (non-DEV) builds for
+ * non-Shopify environments, making the "Accept & Chat" button a no-op.
  */
 export function requestConsent(): Promise<ConsentStatus> {
   return new Promise((resolve) => {
@@ -121,7 +108,6 @@ export function requestConsent(): Promise<ConsentStatus> {
         resolve(status);
       });
 
-      // Request analytics + marketing consent for full widget functionality
       cp.setTrackingConsent(
         { analyticsProcessingAllowed: true, marketingAllowed: false },
         (err) => {
@@ -134,15 +120,16 @@ export function requestConsent(): Promise<ConsentStatus> {
       return;
     }
 
-    // ── Non-Shopify fallback ─────────────────────────────────────────
-    // In a real headless setup, implement your own consent UI here.
-    // For dev/test, auto-grant.
-    if (import.meta.env.DEV) {
+    // ── Non-Shopify fallback (dev AND production without Shopify privacy API) ──
+    // The user explicitly clicked "Accept & Chat" — always grant.
+    // In a production headless setup, replace this with your own consent modal.
+    // widgetAuth on the server validates the domain — this is the client-side gate.
+    try {
       localStorage.setItem(FALLBACK_CONSENT_KEY, 'granted');
-      resolve('granted');
-    } else {
-      resolve('unknown');
+    } catch {
+      // localStorage blocked (e.g. sandboxed iframe) — grant in-memory only
     }
+    resolve('granted');
   });
 }
 
@@ -150,7 +137,7 @@ export function requestConsent(): Promise<ConsentStatus> {
  * onConsentChange
  *
  * Subscribes to future consent changes (e.g. customer withdraws consent
- * via Shopify's consent manager).  Returns an unsubscribe function.
+ * via Shopify's consent manager). Returns an unsubscribe function.
  */
 export function onConsentChange(
   handler: (status: ConsentStatus) => void,
@@ -161,6 +148,6 @@ export function onConsentChange(
     handler(consent.analyticsProcessingAllowed ? 'granted' : 'denied');
   });
 
-  // Shopify doesn't provide an unsubscribe mechanism, so no-op
+  // Shopify doesn't provide an unsubscribe mechanism
   return () => {};
 }

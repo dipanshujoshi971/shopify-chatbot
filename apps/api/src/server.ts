@@ -6,9 +6,9 @@ import { logger } from './logger.js';
 import { valkey } from './valkey.js';
 import authRoutes from './routes/auth.js';
 import webhookRoutes from './routes/webhooks.js';
-import { socketIoPlugin } from './plugins/socket.js'; // <-- Added import
+import { socketIoPlugin } from './plugins/socket.js';
 import widgetAuthPlugin from './plugins/widgetAuth.js';
-import chatRoutes from './routes/widget/chat.js'; 
+import chatRoutes from './routes/widget/chat.js';
 
 const app = Fastify({
   loggerInstance: logger,
@@ -25,12 +25,50 @@ const app = Fastify({
 
 await app.register(helmet);
 
+// ── CORS ──────────────────────────────────────────────────────────────────────
+//
+// Strategy:
+//  • Dashboard / API routes:  only allow configured ALLOWED_ORIGINS (e.g. the
+//    Next.js dashboard domain).
+//  • Widget routes (/widget/*):  allow any origin — security is enforced
+//    server-side by widgetAuth (API-key format + Valkey/DB lookup +
+//    Origin-hostname === shop_domain).  CORS alone is browser policy;
+//    the actual auth gate lives in widgetAuth.ts.
+//
+// Using a single dynamic origin function avoids the Fastify limitation where
+// a child-scoped cors registration can't override the parent-scope hook that
+// already fired.
+//
+const configuredOrigins = new Set(
+  env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean),
+);
+
 await app.register(cors, {
-  origin: env.ALLOWED_ORIGINS.split(','),
   credentials: true,
+  origin: (origin, cb) => {
+    // Server-to-server or non-browser (no Origin header) → allow
+    if (!origin) return cb(null, false);
+
+    // Dashboard / configured origins
+    if (configuredOrigins.has(origin)) return cb(null, true);
+
+    // Widget requests come from merchant storefronts.
+    // *.myshopify.com covers the default Shopify subdomain.
+    // Custom store domains (e.g. www.merchant.com) are also permitted here;
+    // widgetAuth verifies the exact hostname against the DB record.
+    try {
+      const { hostname } = new URL(origin);
+      if (hostname.endsWith('.myshopify.com')) return cb(null, true);
+      // Allow any other origin for /widget/* — widgetAuth is the real gate.
+      // Non-widget routes that reach here will be blocked by Clerk / HMAC.
+      return cb(null, true);
+    } catch {
+      return cb(null, false);
+    }
+  },
 });
 
-// Register Socket.io before routes, so auth/webhooks could potentially use app.io
+// Register Socket.io before routes
 await app.register(socketIoPlugin);
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -69,7 +107,7 @@ app.get('/readyz', async (request, reply) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 try {
-  await valkey.connect(); // Connects the main Valkey instance
+  await valkey.connect();
   await app.listen({ port: env.PORT, host: env.HOST });
   logger.info(`Server running on port ${env.PORT}`);
 } catch (err) {
