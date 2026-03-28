@@ -27,7 +27,7 @@ export interface ChatRequestParams {
   shopDomain     : string;
   /** Groups conversations from the same browser session. Required by chat.ts */
   sessionId      : string;
-  conversationId : string;
+  conversationId?: string;
   message        : string;
   /** Shopify cart GID — forwarded so AI can operate on the existing cart */
   cartId        ?: string;
@@ -67,10 +67,9 @@ export async function* streamChat(
         // domain-lock check. No need to set manually.
       },
       body: JSON.stringify({
-        // FIX 2: sessionId is required by the chat route JSON schema
         sessionId,
-        conversationId,
         message,
+        ...(conversationId ? { conversationId } : {}),
         ...(cartId && { cartId }),
       }),
     });
