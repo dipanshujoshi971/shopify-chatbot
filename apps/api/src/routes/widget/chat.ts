@@ -5,20 +5,13 @@
  * Requires widgetAuth middleware (sets request.tenantId + request.shopDomain).
  * Streams LLM responses in Vercel AI SDK data-stream format.
  *
- * Changes from original
- * ─────────────────────
- * 1. Model selection: replaced hard-coded `anthropic('claude-haiku-4-5-20251001')`
- *    with `getLLMModel('fast')` from lib/llm.ts.  All other logic is untouched.
- *    Switch provider with LLM_PROVIDER env var — no code changes required.
- *
- * 2. StreamData: added `StreamData` import + `onStepFinish` callback so the
- *    widget receives tool results as typed `2:[{...}]` annotations.
- *    The widget uses these to render ProductCarousel and OrderCard.
- *    `streamData.close()` is called as the first line of `onFinish` so
- *    the annotation stream terminates before the HTTP response ends.
- *
- * Everything else (budget checks, DB persistence, system prompt, tools,
- * plan limits, history loading) is byte-for-byte identical to original.
+ * FIX (Conversation not found):
+ *   The Preact widget pre-generates a conversationId via useState() and sends
+ *   it on the very first message.  The original code treated any provided
+ *   conversationId as "must already exist" and returned 404 when it didn't.
+ *   Fix: when a client-supplied conversationId is not found in the DB, create
+ *   a new conversation row with that ID instead of erroring.  The client-
+ *   generated ID is random (newConversationId()) so collisions are negligible.
  */
 
 import type { FastifyPluginAsync } from 'fastify';
@@ -26,13 +19,11 @@ import { streamText, StreamData, type CoreMessage } from 'ai';
 import { Readable }    from 'node:stream';
 import { nanoid }      from 'nanoid';
 import { merchants, eq } from '@chatbot/db';
-import { env }         from '../../env.js';
 import { valkey }      from '../../valkey.js';
 import { db, pgPool }  from '../../db.js';
 import { buildSystemPrompt }        from '../../lib/systemPrompt.js';
 import { createAdminTools }         from '../../lib/tools.js';
 import { createStorefrontMCPTools } from '../../lib/storefrontTools.js';
-// ─── CHANGE 1: provider-agnostic model selection ──────────────────────────────
 import { getLLMModel, getLLMInfo }  from '../../lib/llm.js';
 
 // ── Plan token budgets (tokens per conversation) ──────────────────────────────
@@ -85,7 +76,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
 
       const safeName = tenantId.replace('store_', '').replace(/[^a-z0-9_]/g, '_');
 
-      // ── Step 3 · Fast Valkey pre-check ────────────────────────────────────
+      // ── Fast Valkey pre-check ─────────────────────────────────────────────
       if (body.conversationId) {
         try {
           const cached = await valkey.hgetall(budgetKey(tenantId, body.conversationId));
@@ -140,13 +131,22 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
       const planId     = merchant?.planId ?? 'starter';
       const planBudget = PLAN_BUDGET[planId] ?? PLAN_BUDGET.starter;
 
-      // ── 3. Load or create conversation ───────────────────────────────────
-      const isNewConversation = !body.conversationId;
-      const conversationId    = body.conversationId ?? nanoid();
-      let currentTurns        = 0;
-      let currentTotalTokens  = 0;
+      // ── 3. Resolve conversation ───────────────────────────────────────────
+      //
+      // FIX: The widget pre-generates a conversationId and sends it on the
+      // first message.  We must handle three cases:
+      //
+      //   a. No conversationId supplied  → create a new one (generate ID here)
+      //   b. conversationId supplied, row exists → load it (continuing convo)
+      //   c. conversationId supplied, row missing → CREATE it with that ID
+      //      (first message from this widget session; not an error)
+      //
+      const conversationId = body.conversationId ?? nanoid();
+      let currentTurns       = 0;
+      let currentTotalTokens = 0;
 
-      if (isNewConversation) {
+      if (!body.conversationId) {
+        // Case (a): brand-new conversation, no ID from client
         await pgPool.unsafe(
           `INSERT INTO "tenant_${safeName}"."conversations"
              (id, session_id, status, total_tokens_used, total_turns, created_at, updated_at)
@@ -154,6 +154,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
           [conversationId, body.sessionId],
         );
       } else {
+        // Cases (b) and (c): client supplied an ID
         const [conv] = await pgPool.unsafe(
           `SELECT id, total_tokens_used, total_turns, status
              FROM "tenant_${safeName}"."conversations"
@@ -162,17 +163,25 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         ) as any[];
 
         if (!conv) {
-          return reply.code(404).send({ error: 'Conversation not found' });
+          // Case (c): client-generated ID, row doesn't exist yet — create it
+          request.log.info({ conversationId }, 'chat: client-supplied conversationId not found — creating new conversation');
+          await pgPool.unsafe(
+            `INSERT INTO "tenant_${safeName}"."conversations"
+               (id, session_id, status, total_tokens_used, total_turns, created_at, updated_at)
+             VALUES ($1, $2, 'active', 0, 0, now(), now())`,
+            [conversationId, body.sessionId],
+          );
+        } else {
+          // Case (b): existing conversation — validate status and load budgets
+          if (conv.status !== 'active') {
+            return reply.code(400).send({ error: 'Conversation is closed' });
+          }
+          currentTurns       = conv.total_turns       ?? 0;
+          currentTotalTokens = conv.total_tokens_used ?? 0;
         }
-        if (conv.status !== 'active') {
-          return reply.code(400).send({ error: 'Conversation is closed' });
-        }
-
-        currentTurns       = conv.total_turns       ?? 0;
-        currentTotalTokens = conv.total_tokens_used ?? 0;
       }
 
-      // ── Step 3 · DB-level budget checks (authoritative) ───────────────────
+      // ── DB-level budget checks (authoritative) ────────────────────────────
       if (currentTurns >= HARD_LIMITS.maxTurns) {
         return reply.code(429).send({
           error:   'Turn limit reached',
@@ -248,22 +257,14 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         ? `[cart_id: ${body.cartId}]\n${body.message}`
         : body.message;
 
-      // ── CHANGE 2: StreamData — side-channel for rich tool annotations ─────
-      //
-      //   Tool results are forwarded to the widget as `2:[{...}]` lines.
-      //   The widget parses these to render ProductCarousel and OrderCard.
-      //   streamData.close() MUST be called before the HTTP response ends
-      //   (done as first line of onFinish below).
-      //
+      // ── 9. StreamData for tool annotations ───────────────────────────────
       const streamData = new StreamData();
 
-      // ── CHANGE 1: getLLMModel() instead of anthropic() ───────────────────
       const llmInfo = getLLMInfo('fast');
       request.log.info({ tenantId, conversationId, ...llmInfo }, 'chat_stream_start');
 
-      // ── 9. Call LLM via Vercel AI SDK ─────────────────────────────────────
+      // ── 10. Call LLM via Vercel AI SDK ────────────────────────────────────
       const result = streamText({
-        // ─ CHANGE 1: provider-agnostic model ───────────────────────────────
         model:    getLLMModel('fast'),
         system:   systemPrompt,
         messages: [
@@ -273,32 +274,27 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         tools,
         maxSteps: HARD_LIMITS.maxSteps,
 
-        // ─ CHANGE 2: pipe tool results into StreamData ──────────────────────
         onStepFinish: async ({ toolResults }) => {
           if (!toolResults?.length) return;
           for (const tr of toolResults) {
-            // Strip 'undefined' fields to satisfy Vercel AI's strict JSONValue type
             const safePayload = JSON.parse(JSON.stringify({
               type      : 'tool_result',
               toolName  : tr.toolName,
               toolCallId: tr.toolCallId,
               result    : tr.result,
             }));
-            
             streamData.append(safePayload);
           }
         },
 
         onFinish: async ({ text, usage }) => {
-          // CHANGE 2: close StreamData FIRST so the `2:` annotation lines
-          // are flushed before the HTTP response terminates.
           streamData.close();
 
           const tokensUsed  = (usage?.promptTokens ?? 0) + (usage?.completionTokens ?? 0);
           const newTurns    = currentTurns + 1;
           const newTokens   = currentTotalTokens + tokensUsed;
 
-          // ── Step 3 · Update Valkey budget counters (write-through) ──────
+          // Update Valkey budget counters (write-through)
           valkey
             .pipeline()
             .hset(budgetKey(tenantId, conversationId), 'turns', String(newTurns), 'tokens', String(newTokens))
@@ -308,7 +304,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
               request.log.warn({ err }, 'chat: Valkey budget update failed'),
             );
 
-          // ── Persist assistant message ──────────────────────────────────
+          // Persist assistant message
           await pgPool.unsafe(
             `INSERT INTO "tenant_${safeName}"."messages"
                (id, conversation_id, role, content, created_at)
@@ -316,7 +312,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
             [nanoid(), conversationId, JSON.stringify({ type: 'text', text })],
           );
 
-          // ── Update conversation stats ──────────────────────────────────
+          // Update conversation stats
           await pgPool.unsafe(
             `UPDATE "tenant_${safeName}"."conversations"
                 SET total_tokens_used = total_tokens_used + $1,
@@ -333,9 +329,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         },
       });
 
-      // ── 10. Stream response to client ──────────────────────────────────────
-      // CHANGE 2: pass streamData so `2:` annotation lines are merged in.
-      // toDataStream({ data }) is the correct API in ai@4.x.
+      // ── 11. Stream response to client ─────────────────────────────────────
       const nodeStream = Readable.fromWeb(result.toDataStream({ data: streamData }) as any);
 
       return reply
