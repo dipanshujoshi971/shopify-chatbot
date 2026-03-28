@@ -10,6 +10,7 @@ export const merchants = pgTable('merchants', {
   // AES-256-CBC encrypted Shopify access token — never stored in plaintext
   encryptedShopifyToken: text('encrypted_shopify_token'),
   clerkOrgId: text('clerk_org_id').unique(),
+  clerkUserId: text('clerk_user_id').unique(),
   stripeCustomerId: text('stripe_customer_id').unique(),
   stripeSubscriptionId: text('stripe_subscription_id').unique(),
   // GDPR — record when merchant accepted the Data Processing Agreement

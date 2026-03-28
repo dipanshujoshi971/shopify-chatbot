@@ -8,6 +8,13 @@
       "when": 1774374781953,
       "tag": "0000_add_auth_and_webhooks",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1774695267223,
+      "tag": "0001_perpetual_thor_girl",
+      "breakpoints": true
     }
   ]
 }

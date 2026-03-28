@@ -1,6 +1,6 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import { ui } from "@clerk/ui";
-import "@/globals.css";
+import "./globals.css";
 import { Geist } from "next/font/google";
 import { cn } from "@/lib/utils";
 
