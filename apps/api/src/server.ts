@@ -105,7 +105,10 @@ app.get('/readyz', async (request, reply) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-
+logger.info(
+  { provider: env.LLM_PROVIDER, port: env.PORT },
+  'Server configuration loaded',
+);
 try {
   await valkey.connect();
   await app.listen({ port: env.PORT, host: env.HOST });

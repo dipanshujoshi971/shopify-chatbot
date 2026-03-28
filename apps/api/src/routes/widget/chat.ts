@@ -274,6 +274,14 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         tools,
         maxSteps: HARD_LIMITS.maxSteps,
 
+        onError: ({ error }) => {
+          request.log.error(
+            { tenantId, conversationId, err: error },
+            'chat: streamText error',
+          );
+          streamData.close();
+        },
+
         onStepFinish: async ({ toolResults }) => {
           if (!toolResults?.length) return;
           for (const tr of toolResults) {
@@ -290,7 +298,8 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         onFinish: async ({ text, usage }) => {
           streamData.close();
 
-          const tokensUsed  = (usage?.promptTokens ?? 0) + (usage?.completionTokens ?? 0);
+          const rawTokens  = (usage?.promptTokens ?? 0) + (usage?.completionTokens ?? 0);
+          const tokensUsed = Number.isFinite(rawTokens) ? rawTokens : 0;
           const newTurns    = currentTurns + 1;
           const newTokens   = currentTotalTokens + tokensUsed;
 
