@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => ({
     },
   },
   
-  // ... rest of your build config remains exactly the same ...
+  // ... rest of your build config remains exactly the same ...a
 
   build: {
     lib: {

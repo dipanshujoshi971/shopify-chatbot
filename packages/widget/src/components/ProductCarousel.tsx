@@ -5,7 +5,6 @@
  * Handles: featured image, title, price, sale badge, OOS state, CTA.
  */
 
-import { h } from 'preact';
 import { useRef, useCallback } from 'preact/hooks';
 import type { ProductSearchResult, ShopifyProduct } from '../types.js';
 

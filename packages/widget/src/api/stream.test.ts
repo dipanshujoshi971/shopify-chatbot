@@ -5,7 +5,7 @@
  * Run with: pnpm --filter @shopbot/widget test
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // ── Helpers to build mock ReadableStream lines ─────────────────────
 
@@ -13,26 +13,26 @@ function encode(prefix: string, data: unknown): string {
   return `${prefix}:${JSON.stringify(data)}\n`;
 }
 
-function makeStream(lines: string[]): ReadableStream<Uint8Array> {
-  const enc = new TextEncoder();
-  return new ReadableStream({
-    start(ctrl) {
-      for (const line of lines) ctrl.enqueue(enc.encode(line));
-      ctrl.close();
-    },
-  });
-}
+// function makeStream(lines: string[]): ReadableStream<Uint8Array> {
+//   const enc = new TextEncoder();
+//   return new ReadableStream({
+//     start(ctrl) {
+//       for (const line of lines) ctrl.enqueue(enc.encode(line));
+//       ctrl.close();
+//     },
+//   });
+// }
 
 // ── Mock fetch ─────────────────────────────────────────────────────
 
-function mockFetch(lines: string[], status = 200): typeof fetch {
-  return vi.fn().mockResolvedValue({
-    ok    : status >= 200 && status < 300,
-    status,
-    body  : makeStream(lines),
-    json  : async () => ({ message: 'mock error' }),
-  } as unknown as Response);
-}
+// function mockFetch(lines: string[], status = 200): typeof fetch {
+//   return vi.fn().mockResolvedValue({
+//     ok    : status >= 200 && status < 300,
+//     status,
+//     body  : makeStream(lines),
+//     json  : async () => ({ message: 'mock error' }),
+//   } as unknown as Response);
+// }
 
 // We can't directly import streamChat and call it without the real
 // fetch global, so we test the line-parsing logic indirectly by

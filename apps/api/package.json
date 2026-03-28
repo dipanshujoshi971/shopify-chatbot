@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.0",
+    "@ai-sdk/openai": "^1.1.9",
     "@chatbot/db": "*",
     "@chatbot/types": "*",
     "@fastify/cors": "^10.0.1",

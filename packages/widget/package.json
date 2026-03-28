@@ -9,7 +9,7 @@
     "build": "vite build",
     "build:analyze": "vite build --mode analyze",
     "typecheck": "tsc --noEmit",
-    "size": "node -e \"const fs=require('fs');const s=fs.statSync('dist/widget.iife.js');console.log('Raw:',Math.round(s.size/1024)+'KB');\" && gzip -k dist/widget.iife.js && node -e \"const fs=require('fs');const s=fs.statSync('dist/widget.iife.js.gz');console.log('Gzip:',Math.round(s.size/1024)+'KB');\" && rm dist/widget.iife.js.gz",
+    "size": "node -e \"const fs=require('fs');const zlib=require('zlib');const raw=fs.readFileSync('dist/widget.iife.js');console.log('Raw: '+Math.round(raw.length/1024)+'KB');console.log('Gzip: '+Math.round(zlib.gzipSync(raw).length/1024)+'KB');\"",
     "test": "vitest",
     "test:e2e": "node scripts/test-server.js"
   },

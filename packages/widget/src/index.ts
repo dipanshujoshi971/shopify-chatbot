@@ -82,14 +82,16 @@ function readConfig(): WidgetConfig | null {
       apiBaseUrl = '';
     }
   }
-
+  const title = script.dataset.title?.trim() ?? shopDomain;
+  const accentColor = script.dataset.accentColor?.trim();
+  const position = script.dataset.position === 'left' ? 'left' : 'right';
   return {
     apiKey,
     shopDomain,
     apiBaseUrl,
-    title      : script.dataset.title?.trim()    ?? shopDomain,
-    accentColor: script.dataset.accentColor?.trim(),
-    position   : (script.dataset.position as 'right' | 'left') ?? 'right',
+    title,
+    ...(accentColor && { accentColor }), // Only includes accentColor if it exists
+    position,
   };
 }
 

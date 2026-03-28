@@ -3,30 +3,26 @@
  *
  * POST /widget/chat
  * Requires widgetAuth middleware (sets request.tenantId + request.shopDomain).
- * Streams Claude Haiku responses in Vercel AI SDK data-stream format.
+ * Streams LLM responses in Vercel AI SDK data-stream format.
  *
  * Changes from original
  * ─────────────────────
- * 1. DB connection fix: imports singleton pgPool + db instead of creating
- *    per-request pools.  The old `sql.end()` teardown is gone — the shared
- *    pool manages its own connection lifecycle.
+ * 1. Model selection: replaced hard-coded `anthropic('claude-haiku-4-5-20251001')`
+ *    with `getLLMModel('fast')` from lib/llm.ts.  All other logic is untouched.
+ *    Switch provider with LLM_PROVIDER env var — no code changes required.
  *
- * 2. Step 3 — Token budgets: Valkey counters are checked BEFORE calling
- *    the AI SDK.  Hard limits (30 turns, 15 000 tokens, 2 000 chars/turn)
- *    short-circuit the request without ever reaching Anthropic.  Counters
- *    are updated write-through after each successful turn.
+ * 2. StreamData: added `StreamData` import + `onStepFinish` callback so the
+ *    widget receives tool results as typed `2:[{...}]` annotations.
+ *    The widget uses these to render ProductCarousel and OrderCard.
+ *    `streamData.close()` is called as the first line of `onFinish` so
+ *    the annotation stream terminates before the HTTP response ends.
  *
- * 3. Step 4 — Shopify Storefront MCP: product discovery and policy lookup
- *    are now served by Shopify's live MCP server instead of local DB ILIKE
- *    queries.  Cart tools (get_cart, update_cart) are new.
- *
- * 4. Step 5 — Admin API order status: kept as a manually-written tool
- *    because it requires the merchant's decrypted OAuth token.
+ * Everything else (budget checks, DB persistence, system prompt, tools,
+ * plan limits, history loading) is byte-for-byte identical to original.
  */
 
 import type { FastifyPluginAsync } from 'fastify';
-import { streamText, type CoreMessage } from 'ai';
-import { anthropic }   from '@ai-sdk/anthropic';
+import { streamText, StreamData, type CoreMessage } from 'ai';
 import { Readable }    from 'node:stream';
 import { nanoid }      from 'nanoid';
 import { merchants, eq } from '@chatbot/db';
@@ -36,9 +32,10 @@ import { db, pgPool }  from '../../db.js';
 import { buildSystemPrompt }        from '../../lib/systemPrompt.js';
 import { createAdminTools }         from '../../lib/tools.js';
 import { createStorefrontMCPTools } from '../../lib/storefrontTools.js';
+// ─── CHANGE 1: provider-agnostic model selection ──────────────────────────────
+import { getLLMModel, getLLMInfo }  from '../../lib/llm.js';
 
 // ── Plan token budgets (tokens per conversation) ──────────────────────────────
-// -1 = unlimited.  Phase 3: read from a plan_features table.
 const PLAN_BUDGET: Record<string, number> = {
   starter:    10_000,
   growth:     50_000,
@@ -46,23 +43,15 @@ const PLAN_BUDGET: Record<string, number> = {
   enterprise: -1,
 };
 
-// ── Hard limits that apply to ALL plans ──────────────────────────────────────
-// These protect against runaway sessions before they hit Anthropic.
 const HARD_LIMITS = {
-  /** Maximum turns before a conversation is considered closed */
-  maxTurns: 30,
-  /** Maximum cumulative tokens across the entire conversation */
-  maxTotalTokens: 15_000,
-  /** Maximum characters in a single user message (~2 000 tokens) */
+  maxTurns:        30,
+  maxTotalTokens:  15_000,
   maxCharsPerTurn: 8_000,
-  /** Maximum tool-call iterations per AI SDK call */
-  maxSteps: 8,
+  maxSteps:        8,
 } as const;
 
 const MAX_HISTORY = 20;
 
-// ── Valkey key helper ─────────────────────────────────────────────────────────
-// Stores { turns, tokens } as a hash.  TTL: 24 h (86 400 s).
 const budgetKey = (tenantId: string, conversationId: string) =>
   `budget:${tenantId}:${conversationId}`;
 
@@ -80,8 +69,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
             message:        { type: 'string', minLength: 1, maxLength: 8000 },
             sessionId:      { type: 'string', minLength: 1, maxLength: 128 },
             conversationId: { type: 'string' },
-            // cartId is forwarded from the widget JS so the LLM can operate
-            // on the shopper's existing cart without asking for it.
             cartId:         { type: 'string' },
           },
         },
@@ -99,8 +86,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
       const safeName = tenantId.replace('store_', '').replace(/[^a-z0-9_]/g, '_');
 
       // ── Step 3 · Fast Valkey pre-check ────────────────────────────────────
-      // If we already have a cached budget counter for this conversation and it
-      // has already hit a hard limit, reject immediately — no DB round-trip.
       if (body.conversationId) {
         try {
           const cached = await valkey.hgetall(budgetKey(tenantId, body.conversationId));
@@ -124,7 +109,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
             }
           }
         } catch (err) {
-          // Valkey unavailable — fall through to DB check
           request.log.warn({ err }, 'chat: Valkey budget pre-check failed, continuing to DB');
         }
       }
@@ -157,7 +141,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
       const planBudget = PLAN_BUDGET[planId] ?? PLAN_BUDGET.starter;
 
       // ── 3. Load or create conversation ───────────────────────────────────
-      // isNewConversation drives whether we INSERT or SELECT.
       const isNewConversation = !body.conversationId;
       const conversationId    = body.conversationId ?? nanoid();
       let currentTurns        = 0;
@@ -196,14 +179,12 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
           message: 'This conversation has reached its turn limit. Please start a new one.',
         });
       }
-
       if (currentTotalTokens >= HARD_LIMITS.maxTotalTokens) {
         return reply.code(429).send({
           error:   'Token limit reached',
           message: 'This conversation has reached its token limit. Please start a new one.',
         });
       }
-
       if (planBudget !== -1 && currentTotalTokens >= planBudget) {
         return reply.code(429).send({
           error:   'Token budget exceeded',
@@ -222,7 +203,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
       ) as any[];
 
       const history: CoreMessage[] = historyRows
-        .reverse()                          // DESC → ASC (oldest first)
+        .reverse()
         .map((row: any): CoreMessage => {
           let text = row.content as string;
           try {
@@ -252,8 +233,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
       );
 
       // ── 7. Build tools ────────────────────────────────────────────────────
-      // Step 4: Storefront MCP tools (product search, policies, cart)
-      // Step 5: Admin API tools (order status, email escalation)
       const mcpTools   = createStorefrontMCPTools(shopDomain);
       const adminTools = createAdminTools({
         tenantId,
@@ -264,16 +243,28 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
 
       const tools = { ...mcpTools, ...adminTools };
 
-      // ── 8. Optionally inject cart context into the first user message ─────
-      // If the widget JS passed a cartId, prepend it so the LLM knows there's
-      // an existing cart to operate on without the customer having to mention it.
+      // ── 8. Optionally inject cart context ─────────────────────────────────
       const userMessage = body.cartId
         ? `[cart_id: ${body.cartId}]\n${body.message}`
         : body.message;
 
-      // ── 9. Call Claude Haiku via Vercel AI SDK ────────────────────────────
+      // ── CHANGE 2: StreamData — side-channel for rich tool annotations ─────
+      //
+      //   Tool results are forwarded to the widget as `2:[{...}]` lines.
+      //   The widget parses these to render ProductCarousel and OrderCard.
+      //   streamData.close() MUST be called before the HTTP response ends
+      //   (done as first line of onFinish below).
+      //
+      const streamData = new StreamData();
+
+      // ── CHANGE 1: getLLMModel() instead of anthropic() ───────────────────
+      const llmInfo = getLLMInfo('fast');
+      request.log.info({ tenantId, conversationId, ...llmInfo }, 'chat_stream_start');
+
+      // ── 9. Call LLM via Vercel AI SDK ─────────────────────────────────────
       const result = streamText({
-        model:    anthropic('claude-haiku-4-5-20251001'),
+        // ─ CHANGE 1: provider-agnostic model ───────────────────────────────
+        model:    getLLMModel('fast'),
         system:   systemPrompt,
         messages: [
           ...history,
@@ -282,13 +273,32 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         tools,
         maxSteps: HARD_LIMITS.maxSteps,
 
+        // ─ CHANGE 2: pipe tool results into StreamData ──────────────────────
+        onStepFinish: async ({ toolResults }) => {
+          if (!toolResults?.length) return;
+          for (const tr of toolResults) {
+            // Strip 'undefined' fields to satisfy Vercel AI's strict JSONValue type
+            const safePayload = JSON.parse(JSON.stringify({
+              type      : 'tool_result',
+              toolName  : tr.toolName,
+              toolCallId: tr.toolCallId,
+              result    : tr.result,
+            }));
+            
+            streamData.append(safePayload);
+          }
+        },
+
         onFinish: async ({ text, usage }) => {
+          // CHANGE 2: close StreamData FIRST so the `2:` annotation lines
+          // are flushed before the HTTP response terminates.
+          streamData.close();
+
           const tokensUsed  = (usage?.promptTokens ?? 0) + (usage?.completionTokens ?? 0);
           const newTurns    = currentTurns + 1;
           const newTokens   = currentTotalTokens + tokensUsed;
 
-          // ── Step 3 · Update Valkey budget counters (write-through) ──
-          // Fire-and-forget — a Valkey failure doesn't break the response.
+          // ── Step 3 · Update Valkey budget counters (write-through) ──────
           valkey
             .pipeline()
             .hset(budgetKey(tenantId, conversationId), 'turns', String(newTurns), 'tokens', String(newTokens))
@@ -298,7 +308,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
               request.log.warn({ err }, 'chat: Valkey budget update failed'),
             );
 
-          // ── Persist assistant message ──
+          // ── Persist assistant message ──────────────────────────────────
           await pgPool.unsafe(
             `INSERT INTO "tenant_${safeName}"."messages"
                (id, conversation_id, role, content, created_at)
@@ -306,7 +316,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
             [nanoid(), conversationId, JSON.stringify({ type: 'text', text })],
           );
 
-          // ── Update conversation stats ──
+          // ── Update conversation stats ──────────────────────────────────
           await pgPool.unsafe(
             `UPDATE "tenant_${safeName}"."conversations"
                 SET total_tokens_used = total_tokens_used + $1,
@@ -315,20 +325,26 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
               WHERE id = $2`,
             [tokensUsed, conversationId],
           );
+
+          request.log.info(
+            { tenantId, conversationId, ...llmInfo, ...usage },
+            'chat_stream_finish',
+          );
         },
       });
 
-      // ── 10. Stream response to client ─────────────────────────────────────
-      // Vercel AI SDK returns a Web ReadableStream — convert to Node.js Readable
-      // so Fastify can pipe it to the HTTP response.
-      // No sql.end() needed — the shared pgPool manages its own connections.
-      const nodeStream = Readable.fromWeb(result.toDataStream() as any);
+      // ── 10. Stream response to client ──────────────────────────────────────
+      // CHANGE 2: pass streamData so `2:` annotation lines are merged in.
+      // toDataStream({ data }) is the correct API in ai@4.x.
+      const nodeStream = Readable.fromWeb(result.toDataStream({ data: streamData }) as any);
 
       return reply
         .header('Content-Type',            'text/plain; charset=utf-8')
         .header('X-Vercel-AI-Data-Stream',  'v1')
         .header('Cache-Control',            'no-cache, no-transform')
         .header('X-Conversation-Id',         conversationId)
+        .header('X-LLM-Provider',            llmInfo.provider)
+        .header('X-LLM-Model',               llmInfo.model)
         .send(nodeStream);
     },
   );

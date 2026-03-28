@@ -5,7 +5,6 @@
  * Shows: order number, financial/fulfillment status, line items, tracking.
  */
 
-import { h } from 'preact';
 import type { OrderStatusResult } from '../types.js';
 
 interface OrderCardProps {
