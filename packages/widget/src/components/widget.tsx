@@ -3,10 +3,10 @@
  *
  * Root Preact component for the Shopbot chat widget.
  *
- * Fix from previous version:
- *   sessionId was never sent to the API — chat.ts requires it in the
- *   JSON body schema.  Now derived from sessionStorage via
- *   getOrCreateSessionId() (tab-scoped, GDPR-friendly).
+ * Fixes applied:
+ *   1. timeoutRef — 30-second safety net so the widget never hangs forever
+ *      if the server stream doesn't send a finish event.
+ *   2. timeout is cleared in finally{} so normal completions don't trigger it.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
@@ -104,13 +104,18 @@ export function Widget({ config }: WidgetProps) {
   const [streaming,      setStreaming]      = useState(false);
   const [consent,        setConsent]        = useState<ConsentStatus>(() => getConsentStatus());
   const [conversationId] = useState(() => newConversationId());
-  // FIX: sessionId is required by chat.ts — derive from sessionStorage
-  const [sessionId]                        = useState(() => getOrCreateSessionId());
+  const [sessionId]      = useState(() => getOrCreateSessionId());
   const [unread,         setUnread]         = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
   const abortRef       = useRef<AbortController | null>(null);
+
+  // FIX: Safety-net timeout ref. If the server stream never sends a finish
+  // event (e.g. due to a network drop or server error after headers are sent),
+  // the widget would be stuck in loading state forever. This clears it after
+  // 30 seconds and shows a friendly retry message instead.
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Expose shop domain for ProductCarousel links
   useEffect(() => { (window as any).__shopbot_domain__ = shopDomain; }, [shopDomain]);
@@ -170,12 +175,29 @@ export function Widget({ config }: WidgetProps) {
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
+    // FIX: Start the 30-second safety-net timer. If the stream never closes
+    // cleanly, this will unblock the UI and show a retry message.
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId && m.streaming
+            ? {
+                ...m,
+                content: m.content || '⚠️ Response timed out. Please try again.',
+                streaming: false,
+              }
+            : m,
+        ),
+      );
+      setStreaming(false);
+    }, 30_000);
+
     try {
       const gen = streamChat({
         apiBaseUrl,
         apiKey,
         shopDomain,
-        // FIX: pass sessionId — required by chat.ts JSON body schema
         sessionId,
         conversationId,
         message: text,
@@ -195,8 +217,6 @@ export function Widget({ config }: WidgetProps) {
                 annotation.toolName === 'search_shop_catalog' ||
                 annotation.toolName === 'get_order_status'
               ) {
-                // Pass the local `annotation` directly.
-                // It is strictly typed as AnnotationEvent, satisfying exactOptionalPropertyTypes.
                 setMessages((prev) =>
                   prev.map((m) => m.id === assistantId ? { ...m, annotation } : m),
                 );
@@ -229,6 +249,10 @@ export function Widget({ config }: WidgetProps) {
         ),
       );
     } finally {
+      // FIX: Always clear the timeout, whether the stream succeeded or failed.
+      // Without this, a successful fast response could still trigger the
+      // timeout message 30 seconds later.
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       setStreaming(false);
     }
   }, [input, streaming, apiBaseUrl, apiKey, shopDomain, sessionId, conversationId]);
@@ -245,7 +269,6 @@ export function Widget({ config }: WidgetProps) {
     setTimeout(() => textareaRef.current?.focus(), 100);
   }, []);
 
-  // Inlined SVG icons — zero dep, zero bytes overhead from icon font
   const ChatIcon  = () => (<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/><path d="M7 9h10v2H7zm0-3h10v2H7zm0 6h7v2H7z"/></svg>);
   const CloseIcon = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>);
   const SendIcon  = () => (<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>);

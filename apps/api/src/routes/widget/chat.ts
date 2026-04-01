@@ -5,13 +5,12 @@
  * Requires widgetAuth middleware (sets request.tenantId + request.shopDomain).
  * Streams LLM responses in Vercel AI SDK data-stream format.
  *
- * FIX (Conversation not found):
- *   The Preact widget pre-generates a conversationId via useState() and sends
- *   it on the very first message.  The original code treated any provided
- *   conversationId as "must already exist" and returned 404 when it didn't.
- *   Fix: when a client-supplied conversationId is not found in the DB, create
- *   a new conversation row with that ID instead of erroring.  The client-
- *   generated ID is random (newConversationId()) so collisions are negligible.
+ * Fixes applied:
+ *   1. closeStreamData() helper prevents double-close between onError + onFinish
+ *   2. onError handler logs the real LLM error instead of swallowing it
+ *   3. onFinish DB writes wrapped in try/catch so a DB failure can't corrupt the stream
+ *   4. tokensUsed guarded with Number.isFinite() to prevent NaN → Postgres integer error
+ *   5. onStepFinish only appends structured tool results the widget can render
  */
 
 import type { FastifyPluginAsync } from 'fastify';
@@ -132,15 +131,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
       const planBudget = PLAN_BUDGET[planId] ?? PLAN_BUDGET.starter;
 
       // ── 3. Resolve conversation ───────────────────────────────────────────
-      //
-      // FIX: The widget pre-generates a conversationId and sends it on the
-      // first message.  We must handle three cases:
-      //
-      //   a. No conversationId supplied  → create a new one (generate ID here)
-      //   b. conversationId supplied, row exists → load it (continuing convo)
-      //   c. conversationId supplied, row missing → CREATE it with that ID
-      //      (first message from this widget session; not an error)
-      //
       const conversationId = body.conversationId ?? nanoid();
       let currentTurns       = 0;
       let currentTotalTokens = 0;
@@ -257,8 +247,19 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         ? `[cart_id: ${body.cartId}]\n${body.message}`
         : body.message;
 
-      // ── 9. StreamData for tool annotations ───────────────────────────────
+      // ── 9. StreamData for tool annotations ────────────────────────────────
+      //
+      // FIX: Use a close-once helper so that onError and onFinish can both
+      // call it safely without throwing "already closed" errors.
+      //
       const streamData = new StreamData();
+      let streamDataClosed = false;
+      const closeStreamData = () => {
+        if (!streamDataClosed) {
+          streamDataClosed = true;
+          streamData.close();
+        }
+      };
 
       const llmInfo = getLLMInfo('fast');
       request.log.info({ tenantId, conversationId, ...llmInfo }, 'chat_stream_start');
@@ -274,36 +275,51 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         tools,
         maxSteps: HARD_LIMITS.maxSteps,
 
+        // FIX: Catch real LLM errors and log them. Without this the SDK
+        // emits a generic "3:An error occurred." line and the widget shows
+        // a vague warning. Now the real cause is visible in the API logs.
         onError: ({ error }) => {
           request.log.error(
             { tenantId, conversationId, err: error },
             'chat: streamText error',
           );
-          streamData.close();
+          closeStreamData();
         },
 
+        // FIX: Only append tool results that the widget knows how to render.
+        // The Shopify MCP storefront tools return plain text — appending them
+        // as annotations makes the widget try (and fail) to render a carousel.
+        // get_order_status returns a structured object the OrderCard can use.
         onStepFinish: async ({ toolResults }) => {
           if (!toolResults?.length) return;
           for (const tr of toolResults) {
-            const safePayload = JSON.parse(JSON.stringify({
-              type      : 'tool_result',
-              toolName  : tr.toolName,
-              toolCallId: tr.toolCallId,
-              result    : tr.result,
-            }));
-            streamData.append(safePayload);
+            if (tr.toolName === 'get_order_status') {
+              const safePayload = JSON.parse(JSON.stringify({
+                type      : 'tool_result',
+                toolName  : tr.toolName,
+                toolCallId: tr.toolCallId,
+                result    : tr.result,
+              }));
+              streamData.append(safePayload);
+            }
           }
         },
 
         onFinish: async ({ text, usage }) => {
-          streamData.close();
+          // FIX: close first so the HTTP stream terminates before the DB
+          // writes — the client never waits for DB persistence anyway.
+          closeStreamData();
 
+          // FIX: Guard against NaN. With OpenAI multi-step tool calls,
+          // usage can contain undefined values. undefined + undefined = NaN,
+          // which Postgres rejects as "invalid input syntax for type integer".
           const rawTokens  = (usage?.promptTokens ?? 0) + (usage?.completionTokens ?? 0);
           const tokensUsed = Number.isFinite(rawTokens) ? rawTokens : 0;
-          const newTurns    = currentTurns + 1;
-          const newTokens   = currentTotalTokens + tokensUsed;
 
-          // Update Valkey budget counters (write-through)
+          const newTurns  = currentTurns + 1;
+          const newTokens = currentTotalTokens + tokensUsed;
+
+          // Valkey budget counters — fire-and-forget, never block the stream
           valkey
             .pipeline()
             .hset(budgetKey(tenantId, conversationId), 'turns', String(newTurns), 'tokens', String(newTokens))
@@ -313,23 +329,29 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
               request.log.warn({ err }, 'chat: Valkey budget update failed'),
             );
 
-          // Persist assistant message
-          await pgPool.unsafe(
-            `INSERT INTO "tenant_${safeName}"."messages"
-               (id, conversation_id, role, content, created_at)
-             VALUES ($1, $2, 'assistant', $3, now())`,
-            [nanoid(), conversationId, JSON.stringify({ type: 'text', text })],
-          );
+          // FIX: Wrap DB writes in try/catch. An unhandled rejection here
+          // previously caused Fastify to emit a "response terminated with
+          // an error with headers already sent" warning and corrupted the
+          // stream close signal, leaving the widget stuck in loading state.
+          try {
+            await pgPool.unsafe(
+              `INSERT INTO "tenant_${safeName}"."messages"
+                 (id, conversation_id, role, content, created_at)
+               VALUES ($1, $2, 'assistant', $3, now())`,
+              [nanoid(), conversationId, JSON.stringify({ type: 'text', text })],
+            );
 
-          // Update conversation stats
-          await pgPool.unsafe(
-            `UPDATE "tenant_${safeName}"."conversations"
-                SET total_tokens_used = total_tokens_used + $1,
-                    total_turns       = total_turns + 1,
-                    updated_at        = now()
-              WHERE id = $2`,
-            [tokensUsed, conversationId],
-          );
+            await pgPool.unsafe(
+              `UPDATE "tenant_${safeName}"."conversations"
+                  SET total_tokens_used = total_tokens_used + $1,
+                      total_turns       = total_turns + 1,
+                      updated_at        = now()
+                WHERE id = $2`,
+              [tokensUsed, conversationId],
+            );
+          } catch (err) {
+            request.log.error({ err, tenantId, conversationId }, 'chat: onFinish DB write failed');
+          }
 
           request.log.info(
             { tenantId, conversationId, ...llmInfo, ...usage },
