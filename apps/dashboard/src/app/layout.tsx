@@ -1,17 +1,29 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import { ui } from "@clerk/ui";
 import "./globals.css";
-import { Geist } from "next/font/google";
+import { Inter } from "next/font/google";
 import { cn } from "@/lib/utils";
+import { ThemeProvider } from "@/components/theme-provider";
 
-const geist = Geist({ subsets: ['latin'], variable: '--font-sans' });
+const inter = Inter({
+  subsets: ['latin'],
+  variable: '--font-sans',
+  display: 'swap',
+});
+
+export const metadata = {
+  title: 'ShopChat Dashboard',
+  description: 'AI-powered chatbot dashboard for Shopify stores',
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={cn("font-sans", geist.variable)}>
-      <body className="bg-[#0a0608] text-white antialiased">
+    <html lang="en" className={cn("dark", inter.variable)} suppressHydrationWarning>
+      <body className="font-sans antialiased">
         <ClerkProvider ui={ui}>
-          {children}
+          <ThemeProvider>
+            {children}
+          </ThemeProvider>
         </ClerkProvider>
       </body>
     </html>

@@ -1,242 +1,157 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useState } from 'react';
 import {
   LayoutDashboard,
-  Plug2,
+  Puzzle,
+  Download,
+  Paintbrush,
+  Sparkles,
   Inbox,
   Ticket,
-  BarChart2,
-  Settings,
-  ChevronRight,
-  ChevronLeft,
-  Download,
-  Palette,
-  FlaskConical,
-  Headphones,
+  HeadphonesIcon,
   AlertTriangle,
   History,
+  BarChart3,
   MessageSquareText,
-  ShoppingCart,
+  DollarSign,
   Users,
-  BrainCircuit,
+  Brain,
   Gauge,
-  Sun,
-  Moon,
+  Settings,
+  ChevronDown,
   Store,
+  Menu,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UserButton } from '@clerk/nextjs';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type NavChild = { href: string; label: string; icon: React.ElementType };
-
-type NavItem =
-  | { type: 'link';  href: string; label: string; icon: React.ElementType }
-  | { type: 'group'; label: string; icon: React.ElementType; children: NavChild[] };
-
-// ─── Nav config ───────────────────────────────────────────────────────────────
-
-const NAV_ITEMS: NavItem[] = [
-  {
-    type: 'link',
-    href: '/dashboard',
-    label: 'Dashboard',
-    icon: LayoutDashboard,
-  },
-  {
-    type: 'group',
-    label: 'Integration',
-    icon: Plug2,
-    children: [
-      { href: '/integration/installation', label: 'Installation',  icon: Download        },
-      { href: '/integration/appearance',   label: 'Appearance',    icon: Palette         },
-      { href: '/integration/playground',   label: 'AI Playground', icon: FlaskConical    },
-    ],
-  },
-  {
-    type: 'link',
-    href: '/inbox',
-    label: 'Inbox',
-    icon: Inbox,
-  },
-  {
-    type: 'group',
-    label: 'Tickets',
-    icon: Ticket,
-    children: [
-      { href: '/tickets/merchant-support',     label: 'Merchant Support',      icon: Headphones     },
-      { href: '/tickets/customer-escalations', label: 'Customer Escalations',  icon: AlertTriangle  },
-      { href: '/tickets/history',              label: 'Ticket History',         icon: History        },
-    ],
-  },
-  {
-    type: 'group',
-    label: 'Analytics',
-    icon: BarChart2,
-    children: [
-      { href: '/analytics/conversational', label: 'Conversational Analytics', icon: MessageSquareText },
-      { href: '/analytics/sales',          label: 'Sales Analytics',          icon: ShoppingCart      },
-      { href: '/analytics/customer',       label: 'Customer Behavior',        icon: Users             },
-      { href: '/analytics/ai-insights',    label: 'AI Insights',              icon: BrainCircuit      },
-      { href: '/analytics/performance',    label: 'Performance & Response',   icon: Gauge             },
-    ],
-  },
-  {
-    type: 'link',
-    href: '/settings',
-    label: 'Settings',
-    icon: Settings,
-  },
-];
-
-// ─── Theme hook ───────────────────────────────────────────────────────────────
-
-export function useTheme() {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-
-  useEffect(() => {
-    const stored = (localStorage.getItem('shopchat_theme') ?? 'dark') as 'dark' | 'light';
-    setTheme(stored);
-    document.documentElement.classList.toggle('dark', stored === 'dark');
-  }, []);
-
-  const toggle = useCallback(() => {
-    setTheme(prev => {
-      const next = prev === 'dark' ? 'light' : 'dark';
-      localStorage.setItem('shopchat_theme', next);
-      document.documentElement.classList.toggle('dark', next === 'dark');
-      return next;
-    });
-  }, []);
-
-  return { theme, toggle };
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
 }
 
-// ─── Sub-item ─────────────────────────────────────────────────────────────────
+interface NavGroup {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  items: NavItem[];
+}
 
-function SubItem({
-  child,
-  isActive,
-  collapsed,
-}: {
-  child: NavChild;
-  isActive: boolean;
-  collapsed: boolean;
-}) {
-  const Icon = child.icon;
+type NavEntry = NavItem | NavGroup;
+
+function isGroup(entry: NavEntry): entry is NavGroup {
+  return 'items' in entry;
+}
+
+const navigation: NavEntry[] = [
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  {
+    label: 'Integration',
+    icon: Puzzle,
+    items: [
+      { href: '/integration/installation', label: 'Installation', icon: Download },
+      { href: '/integration/appearance', label: 'Appearance', icon: Paintbrush },
+      { href: '/integration/ai-playground', label: 'AI Playground', icon: Sparkles },
+    ],
+  },
+  { href: '/inbox', label: 'Inbox', icon: Inbox },
+  {
+    label: 'Tickets',
+    icon: Ticket,
+    items: [
+      { href: '/tickets/merchant-support', label: 'Merchant Support', icon: HeadphonesIcon },
+      { href: '/tickets/customer-escalations', label: 'Customer Escalations', icon: AlertTriangle },
+      { href: '/tickets/history', label: 'Ticket History', icon: History },
+    ],
+  },
+  {
+    label: 'Analytics',
+    icon: BarChart3,
+    items: [
+      { href: '/analytics/conversational', label: 'Conversational', icon: MessageSquareText },
+      { href: '/analytics/sales', label: 'Sales Analytics', icon: DollarSign },
+      { href: '/analytics/customer-behavior', label: 'Customer Behavior', icon: Users },
+      { href: '/analytics/ai-insights', label: 'AI Insights', icon: Brain },
+      { href: '/analytics/performance', label: 'Performance & Response', icon: Gauge },
+    ],
+  },
+  { href: '/settings', label: 'Settings', icon: Settings },
+];
+
+interface SidebarProps {
+  shopDomain?: string;
+  planId?: string;
+}
+
+function NavLink({ item, collapsed }: { item: NavItem; collapsed?: boolean }) {
+  const pathname = usePathname();
+  const active = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+
   return (
     <Link
-      href={child.href}
-      title={collapsed ? child.label : undefined}
+      href={item.href}
       className={cn(
-        'group flex items-center gap-2.5 px-3 py-[7px] rounded-lg text-[12.5px] font-medium',
-        'transition-colors duration-150',
-        isActive
-          ? 'text-emerald-400 bg-emerald-500/10'
-          : 'text-zinc-500 dark:text-zinc-500 hover:text-zinc-200 hover:bg-white/5',
+        'group flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] font-medium transition-all duration-200',
+        active
+          ? 'bg-primary/15 text-primary shadow-[inset_0_0_0_1px] shadow-primary/20'
+          : 'text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent',
       )}
     >
-      <Icon
-        size={13}
-        className={cn(
-          'shrink-0 transition-colors duration-150',
-          isActive
-            ? 'text-emerald-400'
-            : 'text-zinc-600 group-hover:text-zinc-300',
-        )}
-      />
-      <span
-        className={cn(
-          'whitespace-nowrap overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-          collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100',
-        )}
-      >
-        {child.label}
-      </span>
+      <item.icon className={cn(
+        'w-[18px] h-[18px] flex-shrink-0 transition-colors',
+        active ? 'text-primary' : 'text-sidebar-foreground group-hover:text-sidebar-accent-foreground',
+      )} />
+      {!collapsed && <span>{item.label}</span>}
+      {active && (
+        <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px] shadow-primary/60" />
+      )}
     </Link>
   );
 }
 
-// ─── Nav group ────────────────────────────────────────────────────────────────
-
-function NavGroup({
-  item,
-  pathname,
-  collapsed,
-}: {
-  item: Extract<NavItem, { type: 'group' }>;
-  pathname: string;
-  collapsed: boolean;
-}) {
-  const isChildActive = item.children.some(c => pathname.startsWith(c.href));
-  const [open, setOpen] = useState(isChildActive);
-  const Icon = item.icon;
-
-  useEffect(() => { if (isChildActive) setOpen(true); }, [isChildActive]);
-  useEffect(() => { if (collapsed) setOpen(false); }, [collapsed]);
+function NavSection({ group }: { group: NavGroup }) {
+  const pathname = usePathname();
+  const isActive = group.items.some(
+    (item) => pathname === item.href || pathname.startsWith(item.href)
+  );
+  const [open, setOpen] = useState(isActive);
 
   return (
-    <div className="flex flex-col">
+    <div>
       <button
-        onClick={() => !collapsed && setOpen(o => !o)}
-        title={collapsed ? item.label : undefined}
+        onClick={() => setOpen(!open)}
         className={cn(
-          'flex items-center gap-3 rounded-xl text-[13px] font-semibold select-none',
-          'px-3 py-[9px] w-full',
-          'transition-colors duration-150',
-          isChildActive
-            ? 'text-emerald-400'
-            : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5',
-          collapsed && 'justify-center',
+          'w-full flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] font-medium transition-all duration-200',
+          isActive
+            ? 'text-sidebar-accent-foreground'
+            : 'text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent',
         )}
       >
-        <Icon
-          size={16}
+        <group.icon className={cn(
+          'w-[18px] h-[18px] flex-shrink-0 transition-colors',
+          isActive ? 'text-primary' : '',
+        )} />
+        <span className="flex-1 text-left">{group.label}</span>
+        <ChevronDown
           className={cn(
-            'shrink-0 transition-colors duration-150',
-            isChildActive ? 'text-emerald-400' : 'text-zinc-500',
+            'w-3.5 h-3.5 transition-transform duration-300 opacity-50',
+            open && 'rotate-180',
           )}
         />
-        <span
-          className={cn(
-            'flex-1 text-left whitespace-nowrap overflow-hidden',
-            'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-            collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100',
-          )}
-        >
-          {item.label}
-        </span>
-        {!collapsed && (
-          <ChevronRight
-            size={13}
-            className={cn(
-              'shrink-0 text-zinc-600 transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-              open && 'rotate-90',
-            )}
-          />
-        )}
       </button>
-
-      {/* Animated children */}
       <div
         className={cn(
-          'overflow-hidden',
-          'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-          open && !collapsed ? 'max-h-96 opacity-100 mt-0.5' : 'max-h-0 opacity-0',
+          'overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
+          open ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0',
         )}
       >
-        <div className="ml-[22px] pl-3.5 border-l border-white/[0.07] flex flex-col gap-px pb-1">
-          {item.children.map(child => (
-            <SubItem
-              key={child.href}
-              child={child}
-              isActive={pathname.startsWith(child.href)}
-              collapsed={collapsed}
-            />
+        <div className="ml-4 pl-3 border-l border-sidebar-border space-y-0.5 py-1">
+          {group.items.map((item) => (
+            <NavLink key={item.href} item={item} />
           ))}
         </div>
       </div>
@@ -244,258 +159,50 @@ function NavGroup({
   );
 }
 
-// ─── Nav link ─────────────────────────────────────────────────────────────────
-
-function NavLink({
-  item,
-  pathname,
-  collapsed,
-}: {
-  item: Extract<NavItem, { type: 'link' }>;
-  pathname: string;
-  collapsed: boolean;
-}) {
-  const Icon = item.icon;
-  const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
-
+export function Sidebar({ shopDomain, planId }: SidebarProps) {
   return (
-    <Link
-      href={item.href}
-      title={collapsed ? item.label : undefined}
-      className={cn(
-        'flex items-center gap-3 px-3 py-[9px] rounded-xl text-[13px] font-semibold',
-        'transition-colors duration-150',
-        isActive
-          ? 'bg-emerald-500/12 text-emerald-400'
-          : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5',
-        collapsed && 'justify-center',
-      )}
-    >
-      <Icon
-        size={16}
-        className={cn(
-          'shrink-0 transition-colors duration-150',
-          isActive ? 'text-emerald-400' : 'text-zinc-500',
-        )}
-      />
-      <span
-        className={cn(
-          'flex-1 whitespace-nowrap overflow-hidden',
-          'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-          collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100',
-        )}
-      >
-        {item.label}
-      </span>
-      {isActive && !collapsed && (
-        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
-      )}
-    </Link>
-  );
-}
+    <aside className="hidden lg:flex flex-col w-[260px] min-h-screen glass-sidebar fixed left-0 top-0 z-30">
+      {/* Logo */}
+      <div className="flex items-center gap-3 px-5 py-5 border-b border-sidebar-border">
+        <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-primary/25">
+          <Sparkles className="w-4.5 h-4.5 text-white" />
+          <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-white/20 to-transparent" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-foreground tracking-tight">ShopChat</p>
+          {planId && (
+            <p className="text-[10px] text-primary font-semibold uppercase tracking-wider">{planId} plan</p>
+          )}
+        </div>
+      </div>
 
-// ─── Sidebar props ────────────────────────────────────────────────────────────
-
-interface SidebarProps {
-  shopDomain?: string;
-  planId?: string;
-  userName?: string;
-  userRole?: string;
-  /** Controlled mode: pass collapsed + onCollapsedChange from parent layout */
-  collapsed?: boolean;
-  onCollapsedChange?: (v: boolean) => void;
-}
-
-// ─── Sidebar ──────────────────────────────────────────────────────────────────
-
-export function Sidebar({
-  shopDomain,
-  planId,
-  userName,
-  userRole,
-  collapsed: controlledCollapsed,
-  onCollapsedChange,
-}: SidebarProps) {
-  const pathname = usePathname();
-  const { theme, toggle } = useTheme();
-
-  // Support both controlled and uncontrolled modes
-  const [internalCollapsed, setInternalCollapsed] = useState(false);
-  const collapsed = controlledCollapsed ?? internalCollapsed;
-  const setCollapsed = useCallback(
-    (v: boolean) => {
-      setInternalCollapsed(v);
-      onCollapsedChange?.(v);
-    },
-    [onCollapsedChange],
-  );
-
-  return (
-    <aside
-      style={{ transitionTimingFunction: 'cubic-bezier(0.4,0,0.2,1)' }}
-      className={cn(
-        // Base
-        'hidden lg:flex flex-col min-h-screen fixed left-0 top-0 z-30',
-        'transition-[width] duration-300',
-        // Theme-aware background
-        'bg-zinc-950 dark:bg-zinc-950',
-        'border-r border-white/[0.06]',
-        // Width
-        collapsed ? 'w-[68px]' : 'w-[240px]',
-      )}
-    >
-      {/* ── User profile ──────────────────────────────────────────── */}
-      <div
-        className={cn(
-          'flex items-center border-b border-white/[0.06]',
-          'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-          collapsed ? 'px-[17px] py-5 gap-0' : 'px-4 py-5 gap-3',
-        )}
-      >
-        {/* Avatar */}
-        <div className="relative shrink-0">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center text-white text-sm font-bold shadow-md shadow-emerald-900/40 select-none">
-            {(userName ?? 'A').charAt(0).toUpperCase()}
+      {/* Store pill */}
+      {shopDomain && (
+        <div className="mx-3 mt-3 px-3 py-2.5 rounded-xl bg-sidebar-accent/50 border border-sidebar-border flex items-center gap-2.5">
+          <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <Store className="w-3 h-3 text-primary" />
           </div>
-          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 border-2 border-zinc-950 shadow" />
+          <span className="text-xs text-sidebar-foreground font-medium truncate">{shopDomain}</span>
         </div>
+      )}
 
-        {/* Name + role */}
-        <div
-          className={cn(
-            'min-w-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-            collapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-[120px] opacity-100',
-          )}
-        >
-          <p className="text-[13px] font-semibold text-white leading-none mb-[3px] truncate">
-            {userName ?? 'Andrew Smith'}
-          </p>
-          <p className="text-[10.5px] text-zinc-500 leading-none truncate uppercase tracking-wider font-medium">
-            {userRole ?? 'Product Designer'}
-          </p>
-        </div>
-
-        {/* Collapse toggle */}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className={cn(
-            'flex items-center justify-center w-6 h-6 rounded-lg shrink-0',
-            'text-zinc-600 hover:text-zinc-300 hover:bg-white/10',
-            'transition-all duration-150',
-            collapsed ? 'ml-0' : 'ml-auto',
-          )}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          <ChevronLeft
-            size={14}
-            className={cn(
-              'transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-              collapsed && 'rotate-180',
-            )}
-          />
-        </button>
-      </div>
-
-      {/* ── Store pill ────────────────────────────────────────────── */}
-      <div
-        className={cn(
-          'mx-3 overflow-hidden',
-          'transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-          collapsed || !shopDomain ? 'h-0 mt-0 opacity-0' : 'h-9 mt-3 opacity-100',
-        )}
-      >
-        <div className="h-9 px-3 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center gap-2">
-          <Store size={12} className="text-zinc-600 shrink-0" />
-          <span className="text-[11px] text-zinc-500 truncate">{shopDomain}</span>
-        </div>
-      </div>
-
-      {/* ── Nav ───────────────────────────────────────────────────── */}
-      <nav
-        className={cn(
-          'flex-1 px-3 py-3 flex flex-col gap-px',
-          'overflow-y-auto overflow-x-hidden',
-          '[&::-webkit-scrollbar]:w-0',
-        )}
-      >
-        {NAV_ITEMS.map((item, i) =>
-          item.type === 'link' ? (
-            <NavLink key={i} item={item} pathname={pathname} collapsed={collapsed} />
+      {/* Nav */}
+      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        {navigation.map((entry) =>
+          isGroup(entry) ? (
+            <NavSection key={entry.label} group={entry} />
           ) : (
-            <NavGroup key={i} item={item} pathname={pathname} collapsed={collapsed} />
-          ),
+            <NavLink key={entry.href} item={entry} />
+          )
         )}
       </nav>
 
-      {/* ── Footer ────────────────────────────────────────────────── */}
-      <div className="border-t border-white/[0.06] px-3 py-3 flex flex-col gap-1">
-        {/* Dark / light toggle */}
-        <button
-          onClick={toggle}
-          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          className={cn(
-            'flex items-center gap-3 px-3 py-2 rounded-xl w-full',
-            'text-zinc-500 hover:text-zinc-200 hover:bg-white/5',
-            'transition-colors duration-150 text-[13px] font-medium',
-            collapsed && 'justify-center',
-          )}
-        >
-          {/* Animated icon swap */}
-          <div className="relative shrink-0 w-4 h-4">
-            <Sun
-              size={16}
-              className={cn(
-                'absolute inset-0 transition-all duration-300',
-                theme === 'dark'
-                  ? 'opacity-100 scale-100 rotate-0'
-                  : 'opacity-0 scale-75 rotate-90',
-              )}
-            />
-            <Moon
-              size={16}
-              className={cn(
-                'absolute inset-0 transition-all duration-300',
-                theme === 'light'
-                  ? 'opacity-100 scale-100 rotate-0'
-                  : 'opacity-0 scale-75 -rotate-90',
-              )}
-            />
-          </div>
-
-          <span
-            className={cn(
-              'whitespace-nowrap overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-              collapsed ? 'max-w-0 opacity-0' : 'max-w-[120px] opacity-100',
-            )}
-          >
-            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
-          </span>
-        </button>
-
-        {/* Clerk user button + plan */}
-        <div
-          className={cn(
-            'flex items-center gap-3 px-2 py-1.5 rounded-xl',
-            'transition-all duration-150',
-            collapsed && 'justify-center',
-          )}
-        >
-          <UserButton afterSignOutUrl="/sign-in" />
-          <div
-            className={cn(
-              'overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-              collapsed ? 'max-w-0 opacity-0' : 'max-w-[120px] opacity-100',
-            )}
-          >
-            <p className="text-[11px] text-zinc-500 whitespace-nowrap">
-              Signed in
-              {planId && (
-                <>
-                  {' · '}
-                  <span className="capitalize text-emerald-500 font-medium">{planId}</span>
-                </>
-              )}
-            </p>
+      {/* User */}
+      <div className="p-4 border-t border-sidebar-border">
+        <div className="flex items-center gap-3 px-2">
+          <UserButton />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-sidebar-foreground truncate">Signed in</p>
           </div>
         </div>
       </div>
@@ -503,38 +210,61 @@ export function Sidebar({
   );
 }
 
-// ─── Mobile nav ───────────────────────────────────────────────────────────────
-
 export function MobileNav() {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
 
   return (
-    <div className="lg:hidden flex items-center gap-1 overflow-x-auto px-4 py-2 bg-zinc-950 border-b border-white/[0.06] [&::-webkit-scrollbar]:h-0">
-      {NAV_ITEMS.map((item, i) => {
-        const Icon = item.icon;
-        const href = item.type === 'link' ? item.href : item.children[0].href;
-        const isActive =
-          item.type === 'link'
-            ? pathname.startsWith(item.href)
-            : item.children.some(c => pathname.startsWith(c.href));
+    <>
+      {/* Mobile header bar */}
+      <div className="lg:hidden flex items-center justify-between px-4 py-3 glass border-b border-glass-border">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center">
+            <Sparkles className="w-3.5 h-3.5 text-white" />
+          </div>
+          <span className="text-sm font-bold text-foreground">ShopChat</span>
+        </div>
+        <button
+          onClick={() => setOpen(!open)}
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent transition-colors"
+        >
+          {open ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+        </button>
+      </div>
 
-        return (
-          <Link
-            key={i}
-            href={href}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap',
-              'transition-colors duration-150',
-              isActive
-                ? 'bg-emerald-500/15 text-emerald-400'
-                : 'text-zinc-400 hover:text-zinc-200',
-            )}
-          >
-            <Icon size={13} />
-            {item.label}
-          </Link>
-        );
-      })}
-    </div>
+      {/* Mobile nav drawer */}
+      {open && (
+        <div className="lg:hidden fixed inset-0 z-50 flex">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setOpen(false)} />
+          <div className="relative w-[280px] min-h-screen glass-sidebar overflow-y-auto">
+            <div className="p-4 border-b border-sidebar-border flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4 text-white" />
+                </div>
+                <span className="text-sm font-bold text-foreground">ShopChat</span>
+              </div>
+              <button
+                onClick={() => setOpen(false)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-sidebar-accent"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <nav className="p-3 space-y-1">
+              {navigation.map((entry) =>
+                isGroup(entry) ? (
+                  <NavSection key={entry.label} group={entry} />
+                ) : (
+                  <div key={entry.href} onClick={() => setOpen(false)}>
+                    <NavLink item={entry} />
+                  </div>
+                )
+              )}
+            </nav>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
