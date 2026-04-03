@@ -214,18 +214,6 @@ export function Sidebar({ shopDomain, planId, userName, userImageUrl }: SidebarP
         </button>
       </div>
 
-      {/* ─ Store pill ─ */}
-      {shopDomain && !collapsed && (
-        <div className="mx-3 mt-3 px-3 py-2 rounded-xl bg-sidebar-accent/40 border border-sidebar-border flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg bg-primary/15 flex items-center justify-center flex-shrink-0">
-            <Store className="w-3 h-3 text-primary" />
-          </div>
-          <span className="text-[11px] text-sidebar-foreground font-medium truncate">
-            {shopDomain}
-          </span>
-        </div>
-      )}
-
       {/* ─ Navigation ─ */}
       <nav className={cn(
         'flex-1 overflow-y-auto py-3',
@@ -259,46 +247,6 @@ export function Sidebar({ shopDomain, planId, userName, userImageUrl }: SidebarP
           </div>
         )}
       </nav>
-
-      {/* ─ Recent Messages ─ */}
-      {!collapsed && recentChats.length > 0 && (
-        <div className="px-3 pb-2">
-          <div className="flex items-center justify-between px-3 mb-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/50">
-              Messages
-            </p>
-            <Link
-              href="/inbox"
-              className="w-5 h-5 rounded-md flex items-center justify-center text-sidebar-foreground/50 hover:text-primary hover:bg-sidebar-accent transition-all"
-            >
-              <Plus className="w-3 h-3" />
-            </Link>
-          </div>
-          <div className="space-y-0.5">
-            {recentChats.map((chat) => (
-              <Link
-                key={chat.id}
-                href="/inbox"
-                className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50 transition-all"
-              >
-                <div
-                  className={cn(
-                    'w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0',
-                    chat.status === 'active'
-                      ? 'bg-emerald-500/15 text-emerald-500'
-                      : 'bg-sidebar-accent text-sidebar-foreground',
-                  )}
-                >
-                  <Bot className="w-3.5 h-3.5" />
-                </div>
-                <span className="text-[12px] font-medium truncate">
-                  {chat.sessionId?.slice(0, 12)}...
-                </span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* ─ User footer ─ */}
       <div className={cn(

@@ -74,6 +74,16 @@ function TicketIcon() {
     </svg>
   );
 }
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 12a9 9 0 019-9 9.75 9.75 0 016.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 01-9 9 9.75 9.75 0 01-6.74-2.74L3 16" />
+      <path d="M3 21v-5h5" />
+    </svg>
+  );
+}
 
 // ── Simple markdown renderer ───────────────────────────────────────
 
@@ -138,12 +148,12 @@ function MessageText({ text, isUser }: { text: string; isUser: boolean }) {
 
 // ── Rich annotation renderer ───────────────────────────────────────
 
-function RichContent({ annotations }: { annotations: AnnotationEvent[] }) {
+function RichContent({ annotations, onSendMessage }: { annotations: AnnotationEvent[]; onSendMessage?: (text: string) => void }) {
   return (
     <>
       {annotations.map((annotation, i) => {
         if (annotation.toolName === 'search_shop_catalog') {
-          return <ProductCarousel key={i} data={annotation.result} />;
+          return <ProductCarousel key={i} data={annotation.result} {...(onSendMessage ? { onSendMessage } : {})} />;
         }
         if (annotation.toolName === 'get_order_status') {
           return <OrderCard key={i} data={annotation.result} />;
@@ -159,7 +169,7 @@ function RichContent({ annotations }: { annotations: AnnotationEvent[] }) {
 
 // ── Message bubble ─────────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
+function MessageBubble({ msg, onSendMessage }: { msg: ChatMessage; onSendMessage?: (text: string) => void }) {
   const isUser = msg.role === 'user';
   // Don't render empty streaming messages — typing indicator handles that
   if (msg.streaming && !msg.content && !(msg.annotations?.length)) return null;
@@ -181,7 +191,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           </div>
         )}
         {!isUser && msg.annotations && msg.annotations.length > 0 && (
-          <RichContent annotations={msg.annotations} />
+          <RichContent annotations={msg.annotations} {...(onSendMessage ? { onSendMessage } : {})} />
         )}
         <span class="sb-msg-time">{formatTime(msg.timestamp)}</span>
       </div>
@@ -269,11 +279,12 @@ export function Widget({ config }: WidgetProps) {
   const [input,          setInput]         = useState('');
   const [streaming,      setStreaming]     = useState(false);
   const [consent,        setConsent]       = useState<ConsentStatus>(() => getConsentStatus());
-  const [conversationId] = useState(() => newConversationId());
-  const [sessionId]      = useState(() => getOrCreateSessionId());
+  const [conversationId, setConversationId] = useState(() => newConversationId());
+  const [sessionId,      setSessionId]      = useState(() => getOrCreateSessionId());
   const [unread,         setUnread]        = useState(0);
   const [showTicket,     setShowTicket]    = useState(false);
   const [remoteConfig,   setRemoteConfig]  = useState<RemoteConfig | null>(null);
+  const [configLoaded,   setConfigLoaded]  = useState(false);
   const [pageCtx]        = useState<PageContext>(() => detectPageContext());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -299,18 +310,23 @@ export function Widget({ config }: WidgetProps) {
 
   // Load remote config
   useEffect(() => {
-    fetchWidgetConfig(apiBaseUrl, apiKey).then(setRemoteConfig);
+    fetchWidgetConfig(apiBaseUrl, apiKey).then((cfg) => {
+      setRemoteConfig(cfg);
+      setConfigLoaded(true);
+    }).catch(() => setConfigLoaded(true));
   }, [apiBaseUrl, apiKey]);
 
-  // Apply theme color as CSS variable
+  // Apply theme color + dark mode class
   useEffect(() => {
     const host = document.querySelector('shopbot-widget')?.shadowRoot?.host as HTMLElement | null;
     if (host) {
       host.style.setProperty('--sb-accent', themeColor);
-      // Generate lighter/darker variants
       host.style.setProperty('--sb-accent-hover', themeColor);
+      // Toggle dark mode class based on remote config
+      const isDark = remoteConfig?.mode === 'dark';
+      host.classList.toggle('sb-dark', isDark);
     }
-  }, [themeColor]);
+  }, [themeColor, remoteConfig?.mode]);
 
   // Subscribe to Shopify consent changes
   useEffect(() => onConsentChange(setConsent), []);
@@ -468,6 +484,20 @@ export function Widget({ config }: WidgetProps) {
     ]);
   }, []);
 
+  // Clear chat and refresh session
+  const handleClearChat = useCallback(() => {
+    if (streaming) {
+      abortRef.current?.abort();
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      setStreaming(false);
+    }
+    setMessages([]);
+    setConversationId(newConversationId());
+    // Clear stored session so a fresh one is generated
+    try { sessionStorage.removeItem('shopbot_session_id'); } catch {}
+    setSessionId(getOrCreateSessionId());
+  }, [streaming]);
+
   // Popup hint for product pages
   const [showHint, setShowHint] = useState(false);
   useEffect(() => {
@@ -477,6 +507,11 @@ export function Widget({ config }: WidgetProps) {
     }
     setShowHint(false);
   }, [pageCtx.type, open]);
+
+  // Don't render anything until config is loaded (prevents flash of defaults)
+  if (!configLoaded) {
+    return null;
+  }
 
   return (
     <>
@@ -495,6 +530,14 @@ export function Widget({ config }: WidgetProps) {
               </div>
             </div>
             <div class="sb-header-actions">
+              <button
+                class="sb-header-btn"
+                onClick={handleClearChat}
+                aria-label="Clear chat"
+                title="Clear chat"
+              >
+                <RefreshIcon />
+              </button>
               <button
                 class="sb-header-btn"
                 onClick={() => setShowTicket(true)}
@@ -545,7 +588,7 @@ export function Widget({ config }: WidgetProps) {
                     onStarterClick={handleStarterClick}
                   />
                 ) : (
-                  messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
+                  messages.map((msg) => <MessageBubble key={msg.id} msg={msg} onSendMessage={sendMessage} />)
                 )}
                 {streaming && (
                   <div class="sb-typing" aria-label="Assistant is typing">

@@ -181,11 +181,27 @@ function extractFromJSON(data: unknown, shopDomain: string): ParsedProduct[] {
   // If it's an object with a products/results/items/nodes key
   if (typeof data === 'object') {
     const obj = data as Record<string, unknown>;
-    for (const key of ['products', 'results', 'items', 'nodes', 'edges', 'data']) {
-      if (Array.isArray(obj[key])) {
+    for (const key of ['products', 'results', 'items', 'nodes', 'edges', 'data', 'search', 'searchResults', 'collection']) {
+      const target = obj[key];
+      // Handle nested: e.g. { products: { nodes: [...] } }
+      if (target && typeof target === 'object' && !Array.isArray(target)) {
+        const nested = target as Record<string, unknown>;
+        for (const nk of ['nodes', 'edges', 'items', 'products']) {
+          if (Array.isArray(nested[nk])) {
+            const items = nk === 'edges'
+              ? (nested[nk] as any[]).map((e: any) => e.node).filter(Boolean)
+              : nested[nk] as any[];
+            const products = items
+              .map((item: any) => tryParseProduct(item, shopDomain))
+              .filter((p): p is ParsedProduct => p !== null);
+            if (products.length > 0) return products;
+          }
+        }
+      }
+      if (Array.isArray(target)) {
         const items = key === 'edges'
-          ? (obj[key] as any[]).map((e) => e.node).filter(Boolean)
-          : obj[key] as any[];
+          ? (target as any[]).map((e) => e.node).filter(Boolean)
+          : target as any[];
         const products = items
           .map((item) => tryParseProduct(item, shopDomain))
           .filter((p): p is ParsedProduct => p !== null);
@@ -215,31 +231,63 @@ function tryParseProduct(item: unknown, shopDomain: string): ParsedProduct | nul
 
   if (!title && !handle) return null;
 
-  // Extract price
+  // Extract price — handle multiple formats:
+  //   GraphQL: { priceRange: { minVariantPrice: { amount, currencyCode } } }
+  //   MCP flat: { price_range: { min, max, currency } }
+  //   Simple: { price: "1499.0" }
   let amount = '0';
   let currencyCode = 'USD';
 
   if (obj.priceRange?.minVariantPrice) {
     amount = String(obj.priceRange.minVariantPrice.amount ?? '0');
     currencyCode = obj.priceRange.minVariantPrice.currencyCode ?? 'USD';
+  } else if (obj.price_range?.min != null) {
+    // Shopify MCP flat format: { price_range: { min: "1499.0", max: "1499.0", currency: "USD" } }
+    amount = String(obj.price_range.min);
+    currencyCode = obj.price_range.currency ?? 'USD';
   } else if (obj.price != null) {
     amount = String(obj.price);
   } else if (obj.variants?.[0]?.price != null) {
     amount = String(obj.variants[0].price);
   }
 
-  // Extract image
+  // Extract image — handle multiple formats:
+  //   GraphQL: { featuredImage: { url, altText } }
+  //   MCP flat: { image_url: "https://cdn.shopify.com/..." }
+  //   Various: { image: { url }, images: [...], etc. }
   let featuredImage: { url: string; altText?: string } | undefined;
-  if (obj.featuredImage?.url) {
+  if (typeof obj.image_url === 'string' && obj.image_url) {
+    // Shopify MCP flat format
+    featuredImage = { url: obj.image_url, altText: title };
+  } else if (obj.featuredImage?.url) {
     featuredImage = { url: obj.featuredImage.url, altText: obj.featuredImage.altText };
+  } else if (obj.featuredImage?.src) {
+    featuredImage = { url: obj.featuredImage.src, altText: obj.featuredImage.altText };
   } else if (obj.image?.url) {
     featuredImage = { url: obj.image.url, altText: obj.image.altText };
-  } else if (obj.images?.[0]?.url) {
-    featuredImage = { url: obj.images[0].url };
-  } else if (typeof obj.image === 'string') {
+  } else if (obj.image?.src) {
+    featuredImage = { url: obj.image.src, altText: obj.image.alt };
+  } else if (typeof obj.image === 'string' && obj.image) {
     featuredImage = { url: obj.image };
-  } else if (obj.featuredImage?.src) {
-    featuredImage = { url: obj.featuredImage.src };
+  } else if (obj.images?.[0]?.url) {
+    featuredImage = { url: obj.images[0].url, altText: obj.images[0].altText };
+  } else if (obj.images?.[0]?.src) {
+    featuredImage = { url: obj.images[0].src, altText: obj.images[0].alt };
+  } else if (typeof obj.images?.[0] === 'string' && obj.images[0]) {
+    featuredImage = { url: obj.images[0] };
+  } else if (obj.media?.nodes?.[0]?.image?.url) {
+    featuredImage = { url: obj.media.nodes[0].image.url, altText: obj.media.nodes[0].image.altText };
+  } else if (obj.media?.edges?.[0]?.node?.image?.url) {
+    featuredImage = { url: obj.media.edges[0].node.image.url };
+  } else if (obj.thumbnail?.url) {
+    featuredImage = { url: obj.thumbnail.url };
+  } else if (typeof obj.thumbnail === 'string' && obj.thumbnail) {
+    featuredImage = { url: obj.thumbnail };
+  }
+
+  // Fallback: check variant image_url if product-level image missing
+  if (!featuredImage && Array.isArray(obj.variants) && obj.variants[0]?.image_url) {
+    featuredImage = { url: obj.variants[0].image_url, altText: title };
   }
 
   // Compare at price
@@ -256,17 +304,73 @@ function tryParseProduct(item: unknown, shopDomain: string): ParsedProduct | nul
     }
   }
 
+  // Extract variants (sizes, colors, etc.)
+  // Handles both GraphQL format and MCP flat format:
+  //   GraphQL: { id, title, price: { amount, currencyCode }, availableForSale }
+  //   MCP flat: { variant_id, title, price: "1499.0", currency: "USD", available: true }
+  const variants: ParsedVariant[] = [];
+  if (Array.isArray(obj.variants)) {
+    const variantItems = obj.variants.map((v: any) => v?.node ?? v).filter(Boolean);
+    for (const v of variantItems) {
+      if (!v || typeof v !== 'object') continue;
+      const vTitle = v.title ?? v.name;
+      const vId = v.id ?? v.variant_id ?? '';
+      if (!vTitle && !vId) continue;
+      const variant: ParsedVariant = {
+        id: String(vId),
+        title: String(vTitle ?? 'Default'),
+      };
+      // Extract variant price — multiple formats
+      if (v.price?.amount) {
+        variant.price = { amount: String(v.price.amount), currencyCode: v.price.currencyCode ?? currencyCode };
+      } else if (v.priceV2?.amount) {
+        variant.price = { amount: String(v.priceV2.amount), currencyCode: v.priceV2.currencyCode ?? currencyCode };
+      } else if (typeof v.price === 'string' || typeof v.price === 'number') {
+        // MCP flat format: price as string/number + currency as separate field
+        variant.price = { amount: String(v.price), currencyCode: v.currency ?? currencyCode };
+      }
+      // Available — handle both formats
+      if (v.availableForSale != null) {
+        variant.availableForSale = Boolean(v.availableForSale);
+      } else if (v.available != null) {
+        variant.availableForSale = Boolean(v.available);
+      }
+      variants.push(variant);
+    }
+  } else if (Array.isArray(obj.edges)) {
+    // GraphQL edges format for variants
+    for (const edge of obj.edges) {
+      const v = edge?.node;
+      if (!v) continue;
+      variants.push({
+        id: String(v.id ?? ''),
+        title: String(v.title ?? 'Default'),
+        ...(v.price?.amount ? { price: { amount: String(v.price.amount), currencyCode: v.price.currencyCode ?? currencyCode } } : {}),
+        ...(v.availableForSale != null ? { availableForSale: Boolean(v.availableForSale) } : {}),
+      });
+    }
+  }
+
   const finalHandle = handle ?? title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
+  // Determine availability — check product-level + variant-level
+  let availableForSale = obj.availableForSale ?? obj.available ?? true;
+  if (variants.length > 0 && availableForSale === true) {
+    // If all variants are explicitly marked unavailable, product is unavailable
+    const allUnavailable = variants.every((v) => v.availableForSale === false);
+    if (allUnavailable) availableForSale = false;
+  }
+
   return {
-    id: obj.id ?? `gid://shopify/Product/${finalHandle}`,
+    id: obj.id ?? obj.product_id ?? `gid://shopify/Product/${finalHandle}`,
     title: title ?? finalHandle.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
     handle: finalHandle,
-    description: obj.description ?? obj.body_html ?? '',
+    description: obj.description ?? obj.body_html ?? obj.descriptionHtml ?? '',
     ...(featuredImage ? { featuredImage } : {}),
     priceRange: { minVariantPrice: { amount, currencyCode } },
-    availableForSale: obj.availableForSale ?? obj.available ?? true,
+    availableForSale: Boolean(availableForSale),
     ...(compareAtPriceRange ? { compareAtPriceRange } : {}),
+    ...(variants.length > 0 ? { variants } : {}),
   };
 }
 
@@ -314,11 +418,11 @@ function parseProductsFromMarkdown(text: string, shopDomain: string): ParsedProd
       else if (c === '£' || c.toUpperCase() === 'GBP') currencyCode = 'GBP';
     }
 
-    // Image
+    // Image — match Shopify CDN and general image URLs
     const imgMatch = context.match(
-      /!\[(?:[^\]]*)\]\((https?:\/\/cdn\.shopify\.com[^)]+)\)|(https?:\/\/cdn\.shopify\.com\/s\/files\/[^\s"')]+\.(?:jpg|jpeg|png|webp|gif)[^\s"')]*)/,
+      /!\[(?:[^\]]*)\]\((https?:\/\/[^)]+\.(?:jpg|jpeg|png|webp|gif)[^)]*)\)|(https?:\/\/cdn\.shopify\.com\/[^\s"')]+)|(https?:\/\/[^\s"')]+\.(?:jpg|jpeg|png|webp|gif)[^\s"')]*)/i,
     );
-    const imageUrl = imgMatch?.[1] || imgMatch?.[2];
+    const imageUrl = imgMatch?.[1] || imgMatch?.[2] || imgMatch?.[3];
 
     const availableForSale = !/(?:sold\s*out|out\s*of\s*stock|unavailable)/i.test(context);
 
