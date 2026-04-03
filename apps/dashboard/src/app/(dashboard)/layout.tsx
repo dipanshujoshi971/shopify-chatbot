@@ -1,14 +1,16 @@
 import { getMerchant } from '@/lib/merchant';
+import { currentUser } from '@clerk/nextjs/server';
 import { Sidebar, MobileNav } from '@/components/dashboard/sidebar';
 import { Header } from '@/components/dashboard/header';
 import { ConnectStoreForm } from '@/components/dashboard/connect-store-form';
+import { DashboardContent } from '@/components/dashboard/dashboard-content';
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const merchant = await getMerchant();
+  const [merchant, user] = await Promise.all([getMerchant(), currentUser()]);
 
   if (!merchant) {
     return <ConnectStoreForm />;
@@ -24,21 +26,21 @@ export default async function DashboardLayout({
       </div>
 
       {/* Desktop sidebar */}
-      <Sidebar shopDomain={merchant.shopDomain} planId={merchant.planId} />
+      <Sidebar
+        shopDomain={merchant.shopDomain}
+        planId={merchant.planId}
+        userName={user?.firstName ? `${user.firstName} ${user.lastName ?? ''}`.trim() : undefined}
+        userImageUrl={user?.imageUrl}
+      />
 
       {/* Main content */}
-      <div className="lg:pl-[260px] relative z-10">
-        {/* Mobile nav */}
-        <MobileNav />
-
-        {/* Header */}
+      <DashboardContent>
+        <MobileNav shopDomain={merchant.shopDomain} />
         <Header />
-
-        {/* Page content */}
         <main className="p-6 lg:p-8">
           {children}
         </main>
-      </div>
+      </DashboardContent>
     </div>
   );
 }

@@ -6,7 +6,7 @@
  */
 
 // ------------------------------------------------------------------ //
-// Widget Config (read from <script> data-attributes)
+// Widget Config (read from <script> data-attributes + API config)
 // ------------------------------------------------------------------ //
 
 export interface WidgetConfig {
@@ -22,6 +22,33 @@ export interface WidgetConfig {
   accentColor ?: string;
   /** Override launcher position: 'right' | 'left' */
   position    ?: 'right' | 'left';
+}
+
+/** Remote config loaded from GET /widget/config */
+export interface RemoteConfig {
+  botName         : string;
+  tone            : string;
+  useEmojis       : boolean;
+  greeting        : string;
+  themeColor      : string;
+  position        : 'right' | 'left';
+  mode            : 'light' | 'dark';
+  starterButtons  : string[];
+  customInstructions?: string | null;
+}
+
+// ------------------------------------------------------------------ //
+// Page Context (for context-aware suggestions)
+// ------------------------------------------------------------------ //
+
+export interface PageContext {
+  type: 'product' | 'collection' | 'cart' | 'home' | 'search' | 'other';
+  title?: string;
+  handle?: string;
+  price?: string;
+  vendor?: string;
+  collection?: string;
+  searchQuery?: string;
 }
 
 // ------------------------------------------------------------------ //
@@ -45,7 +72,8 @@ export interface TokenUsage {
 
 export type AnnotationEvent =
   | ProductResultAnnotation
-  | OrderResultAnnotation;
+  | OrderResultAnnotation
+  | CartResultAnnotation;
 
 export interface ProductResultAnnotation {
   type      : 'tool_result';
@@ -59,6 +87,13 @@ export interface OrderResultAnnotation {
   toolName  : 'get_order_status';
   toolCallId: string;
   result    : OrderStatusResult;
+}
+
+export interface CartResultAnnotation {
+  type      : 'tool_result';
+  toolName  : 'get_cart' | 'update_cart';
+  toolCallId: string;
+  result    : CartResult;
 }
 
 // ------------------------------------------------------------------ //
@@ -83,6 +118,14 @@ export interface ShopifyProduct {
   compareAtPriceRange?: {
     minVariantPrice: { amount: string; currencyCode: string };
   };
+  variants?: ProductVariant[];
+}
+
+export interface ProductVariant {
+  id    : string;
+  title : string;
+  price?: { amount: string; currencyCode: string };
+  availableForSale?: boolean;
 }
 
 export interface OrderStatusResult {
@@ -118,6 +161,24 @@ export interface TrackingInfo {
   url    ?: string;
 }
 
+export interface CartResult {
+  cartId       : string;
+  checkoutUrl  : string;
+  totalQuantity: number;
+  lines        : CartLine[];
+  cost?: {
+    totalAmount: { amount: string; currencyCode: string };
+  };
+}
+
+export interface CartLine {
+  title   : string;
+  quantity: number;
+  variant ?: string;
+  image   ?: string;
+  price   ?: { amount: string; currencyCode: string };
+}
+
 // ------------------------------------------------------------------ //
 // Chat Message (internal state)
 // ------------------------------------------------------------------ //
@@ -128,8 +189,8 @@ export interface ChatMessage {
   id        : string;
   role      : MessageRole;
   content   : string;
-  /** Rich UI data attached to this message (product carousel / order card) */
-  annotation?: AnnotationEvent;
+  /** Rich UI data attached to this message (product carousel / order card / cart) */
+  annotations?: AnnotationEvent[];
   timestamp : number;
   streaming ?: boolean;
 }

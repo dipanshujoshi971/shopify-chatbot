@@ -293,7 +293,38 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         onStepFinish: async ({ toolResults }) => {
           if (!toolResults?.length) return;
           for (const tr of toolResults) {
-            if (tr.toolName === 'get_order_status') {
+            request.log.info(
+              { toolName: tr.toolName, resultType: typeof tr.result, hasProducts: !!(tr.result as any)?.__shopbot_products },
+              'chat: onStepFinish tool result',
+            );
+
+            // search_shop_catalog: extract parsed products for carousel
+            if (tr.toolName === 'search_shop_catalog') {
+              const result = tr.result as any;
+              if (result?.__shopbot_products?.length > 0) {
+                request.log.info(
+                  { productCount: result.__shopbot_products.length },
+                  'chat: forwarding product carousel annotation',
+                );
+                const safePayload = JSON.parse(JSON.stringify({
+                  type      : 'tool_result',
+                  toolName  : 'search_shop_catalog',
+                  toolCallId: tr.toolCallId,
+                  result    : {
+                    products: result.__shopbot_products,
+                    query:    result.__shopbot_query ?? '',
+                  },
+                }));
+                streamData.append(safePayload);
+              } else {
+                request.log.warn(
+                  { resultKeys: result && typeof result === 'object' ? Object.keys(result) : typeof result },
+                  'chat: search_shop_catalog returned no __shopbot_products',
+                );
+              }
+            }
+            // get_order_status, get_cart, update_cart: forward directly
+            if (tr.toolName === 'get_order_status' || tr.toolName === 'get_cart' || tr.toolName === 'update_cart') {
               const safePayload = JSON.parse(JSON.stringify({
                 type      : 'tool_result',
                 toolName  : tr.toolName,

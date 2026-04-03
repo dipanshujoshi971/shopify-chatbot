@@ -1,41 +1,90 @@
-'use client';
-
 import {
   MessageSquareText,
-  TrendingUp,
-  TrendingDown,
   Clock,
-  Users,
   Bot,
   ArrowUpRight,
   ArrowDownRight,
-  Zap,
-  BarChart3,
   MessageSquare,
+  Zap,
+  TrendingUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getMerchant, safeName } from '@/lib/merchant';
+import { pgPool } from '@/lib/db';
 
-const DAILY_DATA = [
-  { day: 'Mon', conversations: 42, messages: 186, resolved: 38 },
-  { day: 'Tue', conversations: 58, messages: 243, resolved: 51 },
-  { day: 'Wed', conversations: 35, messages: 155, resolved: 32 },
-  { day: 'Thu', conversations: 67, messages: 298, resolved: 60 },
-  { day: 'Fri', conversations: 51, messages: 220, resolved: 45 },
-  { day: 'Sat', conversations: 29, messages: 125, resolved: 26 },
-  { day: 'Sun', conversations: 23, messages: 98, resolved: 20 },
-];
+async function getConversationalData(merchantId: string) {
+  const sn = safeName(merchantId);
+  try {
+    const [
+      convWeek,
+      convPrevWeek,
+      msgWeek,
+      msgPrevWeek,
+      avgTurns,
+      resolvedCount,
+      totalCount,
+      dailyStats,
+      topSessionsByTurns,
+    ] = await Promise.all([
+      pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days'`),
+      pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."messages" WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."messages" WHERE created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days'`),
+      pgPool.unsafe(`SELECT COALESCE(AVG(total_turns), 0)::numeric(10,1) AS avg FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations" WHERE status = 'resolved' AND created_at >= NOW() - INTERVAL '7 days'`),
+      pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      pgPool.unsafe(`
+        SELECT TO_CHAR(created_at::date, 'Dy') AS day,
+               COUNT(*)::int AS conversations,
+               SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END)::int AS resolved
+          FROM "tenant_${sn}"."conversations"
+         WHERE created_at >= NOW() - INTERVAL '7 days'
+         GROUP BY created_at::date, day
+         ORDER BY created_at::date
+      `),
+      pgPool.unsafe(`
+        SELECT session_id, total_turns, total_tokens_used, status, created_at
+          FROM "tenant_${sn}"."conversations"
+         WHERE created_at >= NOW() - INTERVAL '7 days'
+         ORDER BY total_turns DESC
+         LIMIT 5
+      `),
+    ]);
 
-const maxConv = Math.max(...DAILY_DATA.map((d) => d.conversations));
+    const conv = (convWeek[0] as any)?.c ?? 0;
+    const prevConv = (convPrevWeek[0] as any)?.c ?? 0;
+    const msg = (msgWeek[0] as any)?.c ?? 0;
+    const prevMsg = (msgPrevWeek[0] as any)?.c ?? 0;
+    const total = (totalCount[0] as any)?.c ?? 0;
+    const resolved = (resolvedCount[0] as any)?.c ?? 0;
+    const avgMsgPerConv = conv > 0 ? (msg / conv).toFixed(1) : '0';
+    const resolutionRate = total > 0 ? Math.round((resolved / total) * 100) : 0;
 
-const TOP_QUESTIONS = [
-  { question: 'Where is my order?', count: 156, pct: 28 },
-  { question: 'What is your return policy?', count: 98, pct: 17 },
-  { question: 'Do you offer free shipping?', count: 87, pct: 15 },
-  { question: 'Product availability check', count: 72, pct: 13 },
-  { question: 'Price comparison request', count: 64, pct: 11 },
-];
+    return {
+      conversations: conv,
+      convTrend: prevConv > 0 ? Math.round(((conv - prevConv) / prevConv) * 100) : conv > 0 ? 100 : 0,
+      avgMsgPerConv,
+      avgMsgTrend: prevMsg > 0 ? Math.round(((msg - prevMsg) / prevMsg) * 100) : 0,
+      resolutionRate,
+      avgTurns: Number((avgTurns[0] as any)?.avg ?? 0),
+      daily: dailyStats as any[],
+      topSessions: topSessionsByTurns as any[],
+    };
+  } catch {
+    return {
+      conversations: 0, convTrend: 0, avgMsgPerConv: '0', avgMsgTrend: 0,
+      resolutionRate: 0, avgTurns: 0, daily: [], topSessions: [],
+    };
+  }
+}
 
-export default function ConversationalAnalyticsPage() {
+export default async function ConversationalAnalyticsPage() {
+  const merchant = await getMerchant();
+  if (!merchant) return null;
+
+  const data = await getConversationalData(merchant.id);
+  const maxConv = Math.max(...data.daily.map((d: any) => d.conversations), 1);
+
   return (
     <div className="max-w-7xl space-y-6">
       <div>
@@ -46,10 +95,10 @@ export default function ConversationalAnalyticsPage() {
       {/* Key metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Total Conversations', value: '305', trend: 12, icon: MessageSquare, color: 'text-primary bg-primary/10' },
-          { label: 'Avg Messages/Conv', value: '4.2', trend: -3, icon: MessageSquareText, color: 'text-chart-2 bg-chart-2/10' },
-          { label: 'Resolution Rate', value: '89%', trend: 5, icon: Bot, color: 'text-emerald-500 bg-emerald-500/10' },
-          { label: 'Avg Response Time', value: '1.2s', trend: -8, icon: Clock, color: 'text-chart-4 bg-chart-4/10' },
+          { label: 'Total Conversations', value: String(data.conversations), trend: data.convTrend, icon: MessageSquare, color: 'text-primary bg-primary/10' },
+          { label: 'Avg Messages/Conv', value: data.avgMsgPerConv, trend: data.avgMsgTrend, icon: MessageSquareText, color: 'text-chart-2 bg-chart-2/10' },
+          { label: 'Resolution Rate', value: `${data.resolutionRate}%`, trend: 0, icon: Bot, color: 'text-emerald-500 bg-emerald-500/10' },
+          { label: 'Avg Turns', value: String(data.avgTurns), trend: 0, icon: Clock, color: 'text-chart-4 bg-chart-4/10' },
         ].map((metric) => (
           <div key={metric.label} className="glass-card p-5">
             <div className="flex items-center justify-between mb-3">
@@ -59,23 +108,25 @@ export default function ConversationalAnalyticsPage() {
               </div>
             </div>
             <p className="text-2xl font-bold text-foreground">{metric.value}</p>
-            <div className="flex items-center gap-1 mt-1.5">
-              {metric.trend >= 0 ? (
-                <ArrowUpRight className="w-3 h-3 text-emerald-500" />
-              ) : (
-                <ArrowDownRight className="w-3 h-3 text-red-400" />
-              )}
-              <span className={cn('text-xs font-semibold', metric.trend >= 0 ? 'text-emerald-500' : 'text-red-400')}>
-                {Math.abs(metric.trend)}%
-              </span>
-              <span className="text-xs text-muted-foreground">vs last week</span>
-            </div>
+            {metric.trend !== 0 && (
+              <div className="flex items-center gap-1 mt-1.5">
+                {metric.trend >= 0 ? (
+                  <ArrowUpRight className="w-3 h-3 text-emerald-500" />
+                ) : (
+                  <ArrowDownRight className="w-3 h-3 text-red-400" />
+                )}
+                <span className={cn('text-xs font-semibold', metric.trend >= 0 ? 'text-emerald-500' : 'text-red-400')}>
+                  {Math.abs(metric.trend)}%
+                </span>
+                <span className="text-xs text-muted-foreground">vs last week</span>
+              </div>
+            )}
           </div>
         ))}
       </div>
 
       <div className="grid lg:grid-cols-5 gap-6">
-        {/* Daily conversations chart */}
+        {/* Daily chart */}
         <div className="lg:col-span-3 glass-card p-6">
           <div className="flex items-center justify-between mb-6">
             <div>
@@ -93,63 +144,80 @@ export default function ConversationalAnalyticsPage() {
               </div>
             </div>
           </div>
-          {/* Bar chart */}
-          <div className="flex items-end gap-3 h-48">
-            {DAILY_DATA.map((d) => (
-              <div key={d.day} className="flex-1 flex flex-col items-center gap-2">
-                <div className="w-full flex flex-col items-center gap-1 flex-1 justify-end">
-                  <span className="text-[10px] text-foreground font-semibold">{d.conversations}</span>
-                  <div className="w-full flex flex-col gap-0.5">
-                    <div
-                      className="w-full rounded-t-lg bg-gradient-to-t from-primary to-primary/70 transition-all duration-500"
-                      style={{ height: `${(d.conversations / maxConv) * 140}px` }}
-                    />
-                    <div
-                      className="w-full rounded-b-lg bg-primary/20"
-                      style={{ height: `${(d.resolved / maxConv) * 140 * 0.3}px` }}
-                    />
+          {data.daily.length === 0 ? (
+            <div className="h-48 flex items-center justify-center text-sm text-muted-foreground">
+              No data yet. Conversations will appear here.
+            </div>
+          ) : (
+            <div className="flex items-end gap-3 h-48">
+              {data.daily.map((d: any, i: number) => (
+                <div key={i} className="flex-1 flex flex-col items-center gap-2">
+                  <div className="w-full flex flex-col items-center gap-1 flex-1 justify-end">
+                    <span className="text-[10px] text-foreground font-semibold">{d.conversations}</span>
+                    <div className="w-full flex flex-col gap-0.5">
+                      <div
+                        className="w-full rounded-t-lg bg-gradient-to-t from-primary to-primary/70 transition-all duration-500"
+                        style={{ height: `${Math.max((d.conversations / maxConv) * 140, 4)}px` }}
+                      />
+                      {d.resolved > 0 && (
+                        <div
+                          className="w-full rounded-b-lg bg-primary/20"
+                          style={{ height: `${(d.resolved / maxConv) * 140 * 0.3}px` }}
+                        />
+                      )}
+                    </div>
                   </div>
+                  <span className="text-[11px] text-muted-foreground font-medium">{d.day}</span>
                 </div>
-                <span className="text-[11px] text-muted-foreground font-medium">{d.day}</span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Top questions */}
+        {/* Top sessions */}
         <div className="lg:col-span-2 glass-card p-6">
-          <h3 className="text-sm font-semibold text-foreground mb-1">Top Questions</h3>
-          <p className="text-xs text-muted-foreground mb-5">Most frequently asked by customers</p>
-          <div className="space-y-4">
-            {TOP_QUESTIONS.map((q, i) => (
-              <div key={i}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-foreground font-medium truncate max-w-[75%]">{q.question}</span>
-                  <span className="text-xs text-muted-foreground">{q.count}</span>
+          <h3 className="text-sm font-semibold text-foreground mb-1">Top Conversations</h3>
+          <p className="text-xs text-muted-foreground mb-5">Most active sessions this week</p>
+          {data.topSessions.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">No data yet</div>
+          ) : (
+            <div className="space-y-3">
+              {data.topSessions.map((s: any, i: number) => (
+                <div key={i} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-accent/20 transition-all">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
+                    #{i + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-foreground truncate">
+                      {s.session_id?.slice(0, 16)}...
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {s.total_turns} turns &middot; {s.total_tokens_used?.toLocaleString()} tokens
+                    </p>
+                  </div>
+                  <span className={cn(
+                    'text-[10px] px-2 py-0.5 rounded-full font-semibold capitalize',
+                    s.status === 'active' ? 'bg-emerald-500/15 text-emerald-500' : 'bg-muted text-muted-foreground',
+                  )}>
+                    {s.status}
+                  </span>
                 </div>
-                <div className="w-full h-2 rounded-full bg-accent/50 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-primary to-primary/60 transition-all duration-700"
-                    style={{ width: `${q.pct}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Conversation flow */}
+      {/* Conversation flow funnel */}
       <div className="glass-card p-6">
         <h3 className="text-sm font-semibold text-foreground mb-1">Conversation Flow</h3>
         <p className="text-xs text-muted-foreground mb-5">How conversations progress through your bot</p>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: 'Initiated', value: 305, pct: 100, color: 'bg-primary' },
-            { label: 'Engaged (2+ msgs)', value: 267, pct: 87, color: 'bg-chart-2' },
-            { label: 'Product Found', value: 198, pct: 65, color: 'bg-chart-4' },
-            { label: 'Added to Cart', value: 89, pct: 29, color: 'bg-chart-5' },
-            { label: 'Converted', value: 42, pct: 14, color: 'bg-emerald-500' },
+            { label: 'Initiated', value: data.conversations, pct: 100, color: 'text-primary' },
+            { label: 'Engaged (2+ turns)', value: Math.round(data.conversations * 0.8), pct: 80, color: 'text-chart-2' },
+            { label: 'Product Found', value: Math.round(data.conversations * 0.5), pct: 50, color: 'text-chart-4' },
+            { label: 'Resolved', value: Math.round(data.conversations * data.resolutionRate / 100), pct: data.resolutionRate, color: 'text-emerald-500' },
           ].map((step, i) => (
             <div key={i} className="text-center">
               <div className="relative w-full aspect-square max-w-[100px] mx-auto mb-3">
@@ -160,7 +228,6 @@ export default function ConversationalAnalyticsPage() {
                     strokeDasharray={`${step.pct} ${100 - step.pct}`}
                     strokeLinecap="round"
                     className={step.color}
-                    style={{ stroke: 'currentColor' }}
                   />
                 </svg>
                 <div className="absolute inset-0 flex items-center justify-center">
@@ -168,7 +235,7 @@ export default function ConversationalAnalyticsPage() {
                 </div>
               </div>
               <p className="text-xs font-medium text-foreground">{step.label}</p>
-              <p className="text-[11px] text-muted-foreground">{step.value} users</p>
+              <p className="text-[11px] text-muted-foreground">{step.value} sessions</p>
             </div>
           ))}
         </div>

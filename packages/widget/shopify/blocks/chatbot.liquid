@@ -1,0 +1,71 @@
+{% comment %}
+  Shopify App Embed Block — Shopbot AI Chatbot
+
+  This block is registered as a theme app extension (app embed).
+  Merchants toggle it on/off from:
+    Shopify Admin → Online Store → Themes → Customize → App embeds
+
+  When enabled, it injects the widget script with the correct config.
+{% endcomment %}
+
+{% if block.settings.enabled %}
+  <script
+    src="{{ block.settings.widget_url | default: 'https://api.shopbot.ai/widget.iife.js' }}"
+    data-api-key="{{ block.settings.api_key }}"
+    data-shop-domain="{{ shop.permanent_domain }}"
+    data-title="{{ shop.name }}"
+    data-position="{{ block.settings.position | default: 'right' }}"
+    {% if block.settings.accent_color != blank %}
+      data-accent-color="{{ block.settings.accent_color }}"
+    {% endif %}
+    async
+    defer
+  ></script>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Shopbot AI Chat",
+  "target": "body",
+  "javascript": "",
+  "stylesheet": "",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enabled",
+      "label": "Enable Chatbot",
+      "default": true,
+      "info": "Toggle the AI chatbot widget on your storefront"
+    },
+    {
+      "type": "text",
+      "id": "api_key",
+      "label": "API Key",
+      "info": "Your publishable API key (starts with pk_live_ or pk_test_). Find this in your Shopbot dashboard under Settings."
+    },
+    {
+      "type": "text",
+      "id": "widget_url",
+      "label": "Widget Script URL",
+      "default": "https://api.shopbot.ai/widget.iife.js",
+      "info": "URL to the widget bundle. Change only if self-hosting."
+    },
+    {
+      "type": "select",
+      "id": "position",
+      "label": "Position",
+      "options": [
+        { "value": "right", "label": "Bottom Right" },
+        { "value": "left", "label": "Bottom Left" }
+      ],
+      "default": "right"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Accent Color",
+      "info": "Override the chatbot's accent color. Leave blank to use dashboard settings."
+    }
+  ]
+}
+{% endschema %}

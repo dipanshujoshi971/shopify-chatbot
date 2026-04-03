@@ -219,7 +219,6 @@ export function getAnnotation<T extends AnnotationEvent>(
   message : ChatMessage,
   toolName: T['toolName'],
 ): T | undefined {
-  if (!message.annotation) return undefined;
-  if (message.annotation.toolName === toolName) return message.annotation as T;
-  return undefined;
+  if (!message.annotations?.length) return undefined;
+  return message.annotations.find((a) => a.toolName === toolName) as T | undefined;
 }

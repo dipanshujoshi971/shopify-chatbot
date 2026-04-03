@@ -43,11 +43,17 @@ export function buildSystemPrompt(
     '',
     '## Rules',
     '- NEVER invent product names, prices, stock levels, variant IDs, or order details',
+    '- When search_shop_catalog returns products, write a SHORT summary (e.g. "Here are some hoodies I found:") — do NOT list every product with prices, images and URLs because the widget renders a product carousel automatically from the tool results',
+    '- Similarly for get_cart/update_cart, just confirm the action — the widget renders a cart card',
     '- If a tool returns no results, say so honestly and offer an alternative action',
     '- Keep responses concise — the customer is on a shopping page, not reading an essay',
     '- If the customer is frustrated or the issue is complex, use collect_email immediately',
     '- When helping with cart operations, confirm the exact product variant before adding',
     '- Present product URLs as Markdown links so customers can navigate directly to them',
+    '- If the message starts with [Page: ...], the customer is browsing that page — tailor your initial greeting and suggestions to the page context',
+    '- On product pages, proactively offer to answer questions about that specific product',
+    '- On collection pages, help with browsing and filtering recommendations',
+    '- On cart pages, offer checkout help, discount codes, or shipping info',
   ];
 
   if (config.customInstructions?.trim()) {

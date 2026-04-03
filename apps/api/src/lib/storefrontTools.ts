@@ -6,20 +6,9 @@
  * Shopify exposes a JSON-RPC 2.0 MCP server at each store's
  *   https://{shop}.myshopify.com/api/mcp
  *
- * The endpoint is stateless HTTP POST — no persistent SSE connection is
- * required.  Each `tools/call` request is independent.  We therefore wrap
- * the four Storefront MCP tools as Vercel AI SDK tools that call the HTTP
- * endpoint directly, avoiding the SSE handshake penalty on every message.
- *
- * Tools exposed by Shopify (used here):
- *   • search_shop_catalog           — live product search
- *   • search_shop_policies_and_faqs — shipping / return policy answers
- *   • get_cart                       — retrieve cart contents + checkout URL
- *   • update_cart                    — add / update / remove cart items
- *
- * Note: some stores may restrict access to their MCP endpoint.  All execute
- * functions handle errors gracefully and return plain-text fallback messages
- * so the LLM can always respond to the customer.
+ * The MCP returns JSON content blocks. For search_shop_catalog, we
+ * intercept the raw JSON to extract structured product data for the
+ * widget carousel BEFORE the LLM converts it to markdown text.
  */
 
 import { tool } from 'ai';
@@ -40,15 +29,19 @@ type MCPResponse = {
   error?: { code: number; message: string };
 };
 
-// ─── Core HTTP helper ─────────────────────────────────────────────────────────
+// ─── Core HTTP helpers ────────────────────────────────────────────────────────
 
 const MCP_TIMEOUT_MS = 8_000;
 
-async function callShopifyMCP(
+/**
+ * Call the Shopify MCP and return the raw content blocks.
+ * This preserves the original JSON data before it gets flattened to text.
+ */
+async function callShopifyMCPRaw(
   shopDomain: string,
   toolName:   string,
   args:       Record<string, unknown>,
-): Promise<string> {
+): Promise<MCPContent[]> {
   const controller = new AbortController();
   const timer      = setTimeout(() => controller.abort(), MCP_TIMEOUT_MS);
 
@@ -77,18 +70,270 @@ async function callShopifyMCP(
       throw new Error(`MCP error ${data.error.code}: ${data.error.message}`);
     }
 
-    // Collect all text content blocks
-    const text = (data.result?.content ?? [])
-      .filter((c): c is MCPTextContent => c.type === 'text')
-      .map((c) => c.text)
-      .join('\n')
-      .trim();
-
-    return text || 'No results returned.';
+    return data.result?.content ?? [];
   } catch (err) {
     clearTimeout(timer);
     throw err;
   }
+}
+
+/**
+ * Extract text from MCP content blocks (for tools that just need text).
+ */
+function mcpContentToText(content: MCPContent[]): string {
+  return content
+    .filter((c): c is MCPTextContent => c.type === 'text')
+    .map((c) => c.text)
+    .join('\n')
+    .trim() || 'No results returned.';
+}
+
+// ─── Product data extraction from MCP JSON text ────────────────────────────────
+
+interface ParsedVariant {
+  id: string;
+  title: string;
+  price?: { amount: string; currencyCode: string };
+  availableForSale?: boolean;
+}
+
+interface ParsedProduct {
+  id: string;
+  title: string;
+  handle: string;
+  description: string;
+  featuredImage?: { url: string; altText?: string };
+  priceRange: { minVariantPrice: { amount: string; currencyCode: string } };
+  availableForSale: boolean;
+  compareAtPriceRange?: { minVariantPrice: { amount: string; currencyCode: string } };
+  variants?: ParsedVariant[];
+}
+
+/**
+ * Try to extract structured product data from MCP text blocks.
+ *
+ * Shopify's MCP returns product data as JSON text blocks. We try to:
+ *   1. JSON.parse each text block to find structured product data
+ *   2. Look for common Shopify product JSON shapes
+ *   3. Fall back to regex parsing of markdown-formatted product text
+ */
+function extractProducts(content: MCPContent[], shopDomain: string): ParsedProduct[] {
+  const products: ParsedProduct[] = [];
+
+  for (const block of content) {
+    if (block.type !== 'text') continue;
+    const text = (block as MCPTextContent).text;
+
+    // Strategy 1: Try to JSON.parse the text block directly
+    try {
+      const parsed = JSON.parse(text);
+      const extracted = extractFromJSON(parsed, shopDomain);
+      if (extracted.length > 0) {
+        products.push(...extracted);
+        continue;
+      }
+    } catch {
+      // Not JSON, try text parsing
+    }
+
+    // Strategy 2: Look for JSON embedded in the text (sometimes wrapped in markdown code blocks)
+    const jsonMatches = text.match(/```(?:json)?\s*([\s\S]*?)```/g);
+    if (jsonMatches) {
+      for (const jsonBlock of jsonMatches) {
+        const jsonStr = jsonBlock.replace(/```(?:json)?\s*/, '').replace(/```$/, '').trim();
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const extracted = extractFromJSON(parsed, shopDomain);
+          products.push(...extracted);
+        } catch { /* not valid JSON */ }
+      }
+      if (products.length > 0) continue;
+    }
+
+    // Strategy 3: Parse markdown text with URLs and prices
+    const textProducts = parseProductsFromMarkdown(text, shopDomain);
+    products.push(...textProducts);
+  }
+
+  // Deduplicate by handle
+  const seen = new Set<string>();
+  return products.filter((p) => {
+    if (seen.has(p.handle)) return false;
+    seen.add(p.handle);
+    return true;
+  });
+}
+
+/**
+ * Extract products from a parsed JSON object.
+ * Handles various Shopify JSON shapes: arrays of products, objects with products key, etc.
+ */
+function extractFromJSON(data: unknown, shopDomain: string): ParsedProduct[] {
+  if (!data) return [];
+
+  // If it's an array, check if items look like products
+  if (Array.isArray(data)) {
+    return data
+      .map((item) => tryParseProduct(item, shopDomain))
+      .filter((p): p is ParsedProduct => p !== null);
+  }
+
+  // If it's an object with a products/results/items/nodes key
+  if (typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    for (const key of ['products', 'results', 'items', 'nodes', 'edges', 'data']) {
+      if (Array.isArray(obj[key])) {
+        const items = key === 'edges'
+          ? (obj[key] as any[]).map((e) => e.node).filter(Boolean)
+          : obj[key] as any[];
+        const products = items
+          .map((item) => tryParseProduct(item, shopDomain))
+          .filter((p): p is ParsedProduct => p !== null);
+        if (products.length > 0) return products;
+      }
+    }
+    // Maybe it's a single product
+    const single = tryParseProduct(obj, shopDomain);
+    if (single) return [single];
+  }
+
+  return [];
+}
+
+/**
+ * Try to parse a single object as a Shopify product.
+ */
+function tryParseProduct(item: unknown, shopDomain: string): ParsedProduct | null {
+  if (!item || typeof item !== 'object') return null;
+  const obj = item as Record<string, any>;
+
+  // Must have at least a title or handle
+  const title = obj.title ?? obj.name ?? obj.product_title;
+  const handle = obj.handle ?? obj.url_handle ??
+    (typeof obj.url === 'string' ? obj.url.match(/\/products\/([\w-]+)/)?.[1] : null) ??
+    (typeof obj.onlineStoreUrl === 'string' ? obj.onlineStoreUrl.match(/\/products\/([\w-]+)/)?.[1] : null);
+
+  if (!title && !handle) return null;
+
+  // Extract price
+  let amount = '0';
+  let currencyCode = 'USD';
+
+  if (obj.priceRange?.minVariantPrice) {
+    amount = String(obj.priceRange.minVariantPrice.amount ?? '0');
+    currencyCode = obj.priceRange.minVariantPrice.currencyCode ?? 'USD';
+  } else if (obj.price != null) {
+    amount = String(obj.price);
+  } else if (obj.variants?.[0]?.price != null) {
+    amount = String(obj.variants[0].price);
+  }
+
+  // Extract image
+  let featuredImage: { url: string; altText?: string } | undefined;
+  if (obj.featuredImage?.url) {
+    featuredImage = { url: obj.featuredImage.url, altText: obj.featuredImage.altText };
+  } else if (obj.image?.url) {
+    featuredImage = { url: obj.image.url, altText: obj.image.altText };
+  } else if (obj.images?.[0]?.url) {
+    featuredImage = { url: obj.images[0].url };
+  } else if (typeof obj.image === 'string') {
+    featuredImage = { url: obj.image };
+  } else if (obj.featuredImage?.src) {
+    featuredImage = { url: obj.featuredImage.src };
+  }
+
+  // Compare at price
+  let compareAtPriceRange: ParsedProduct['compareAtPriceRange'] | undefined;
+  if (obj.compareAtPriceRange?.minVariantPrice?.amount) {
+    const cmpAmount = parseFloat(obj.compareAtPriceRange.minVariantPrice.amount);
+    if (cmpAmount > parseFloat(amount)) {
+      compareAtPriceRange = {
+        minVariantPrice: {
+          amount: String(cmpAmount),
+          currencyCode: obj.compareAtPriceRange.minVariantPrice.currencyCode ?? currencyCode,
+        },
+      };
+    }
+  }
+
+  const finalHandle = handle ?? title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+  return {
+    id: obj.id ?? `gid://shopify/Product/${finalHandle}`,
+    title: title ?? finalHandle.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+    handle: finalHandle,
+    description: obj.description ?? obj.body_html ?? '',
+    ...(featuredImage ? { featuredImage } : {}),
+    priceRange: { minVariantPrice: { amount, currencyCode } },
+    availableForSale: obj.availableForSale ?? obj.available ?? true,
+    ...(compareAtPriceRange ? { compareAtPriceRange } : {}),
+  };
+}
+
+/**
+ * Fallback: parse product data from markdown-formatted text.
+ * Used when MCP returns pre-formatted text instead of JSON.
+ */
+function parseProductsFromMarkdown(text: string, shopDomain: string): ParsedProduct[] {
+  const products: ParsedProduct[] = [];
+
+  // Find product URLs
+  const urlPattern = /(?:https?:\/\/[^/]+)?\/products\/([\w-]+)/g;
+  const handles = new Set<string>();
+  let match;
+  while ((match = urlPattern.exec(text)) !== null) {
+    handles.add(match[1]);
+  }
+
+  for (const handle of handles) {
+    // Extract context around this handle
+    const idx = text.indexOf(handle);
+    const start = Math.max(0, idx - 400);
+    const end = Math.min(text.length, idx + 400);
+    const context = text.slice(start, end);
+
+    // Title: look for markdown link text [Title](url) or **Title**
+    const titlePattern = new RegExp(
+      `\\[([^\\]]+)\\]\\([^)]*${handle}[^)]*\\)|\\*\\*([^*]+)\\*\\*`,
+    );
+    const titleMatch = titlePattern.exec(context);
+    const title = titleMatch?.[1] || titleMatch?.[2] ||
+      handle.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+    // Price
+    const priceMatch = context.match(/(?:Price|₹|\$|€|£)[:\s]*[₹$€£]?\s*([\d,]+(?:\.\d{2})?)/i);
+    const amount = priceMatch?.[1]?.replace(/,/g, '') || '0';
+
+    // Currency detection
+    const currMatch = context.match(/(?:USD|INR|EUR|GBP|CAD|AUD|₹|\$|€|£)/i);
+    let currencyCode = 'USD';
+    if (currMatch) {
+      const c = currMatch[0];
+      if (c === '₹' || c.toUpperCase() === 'INR') currencyCode = 'INR';
+      else if (c === '€' || c.toUpperCase() === 'EUR') currencyCode = 'EUR';
+      else if (c === '£' || c.toUpperCase() === 'GBP') currencyCode = 'GBP';
+    }
+
+    // Image
+    const imgMatch = context.match(
+      /!\[(?:[^\]]*)\]\((https?:\/\/cdn\.shopify\.com[^)]+)\)|(https?:\/\/cdn\.shopify\.com\/s\/files\/[^\s"')]+\.(?:jpg|jpeg|png|webp|gif)[^\s"')]*)/,
+    );
+    const imageUrl = imgMatch?.[1] || imgMatch?.[2];
+
+    const availableForSale = !/(?:sold\s*out|out\s*of\s*stock|unavailable)/i.test(context);
+
+    products.push({
+      id: `gid://shopify/Product/${handle}`,
+      title,
+      handle,
+      description: '',
+      ...(imageUrl ? { featuredImage: { url: imageUrl, altText: title } } : {}),
+      priceRange: { minVariantPrice: { amount, currencyCode } },
+      availableForSale,
+    });
+  }
+
+  return products;
 }
 
 // ─── Tool factory ─────────────────────────────────────────────────────────────
@@ -121,7 +366,24 @@ export function createStorefrontMCPTools(shopDomain: string) {
       }),
       execute: async ({ query, context }) => {
         try {
-          return await callShopifyMCP(shopDomain, 'search_shop_catalog', { query, context });
+          // Get RAW MCP content blocks — preserves JSON before LLM flattens it
+          const rawContent = await callShopifyMCPRaw(shopDomain, 'search_shop_catalog', { query, context });
+
+          // Extract structured product data from the raw JSON
+          const products = extractProducts(rawContent, shopDomain);
+
+          // Also get the text for the LLM to use in its response
+          const text = mcpContentToText(rawContent);
+
+          if (products.length > 0) {
+            return {
+              __shopbot_products: products,
+              __shopbot_query: query,
+              text,
+            };
+          }
+
+          return text;
         } catch (err) {
           return `Product search is temporarily unavailable. Please try again shortly. (${(err as Error).message})`;
         }
@@ -147,7 +409,8 @@ export function createStorefrontMCPTools(shopDomain: string) {
         try {
           const args: Record<string, unknown> = { query };
           if (context) args.context = context;
-          return await callShopifyMCP(shopDomain, 'search_shop_policies_and_faqs', args);
+          const rawContent = await callShopifyMCPRaw(shopDomain, 'search_shop_policies_and_faqs', args);
+          return mcpContentToText(rawContent);
         } catch {
           return 'Policy information is temporarily unavailable. Please check the store website.';
         }
@@ -167,7 +430,8 @@ export function createStorefrontMCPTools(shopDomain: string) {
       }),
       execute: async ({ cart_id }) => {
         try {
-          return await callShopifyMCP(shopDomain, 'get_cart', { cart_id });
+          const rawContent = await callShopifyMCPRaw(shopDomain, 'get_cart', { cart_id });
+          return mcpContentToText(rawContent);
         } catch {
           return 'Could not retrieve the cart right now. Please try again.';
         }
@@ -209,7 +473,8 @@ export function createStorefrontMCPTools(shopDomain: string) {
         try {
           const args: Record<string, unknown> = { add_items };
           if (cart_id) args.cart_id = cart_id;
-          return await callShopifyMCP(shopDomain, 'update_cart', args);
+          const rawContent = await callShopifyMCPRaw(shopDomain, 'update_cart', args);
+          return mcpContentToText(rawContent);
         } catch {
           return 'Could not update the cart right now. Please try again.';
         }

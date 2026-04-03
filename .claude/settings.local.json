@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat \"/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(dashboard\\)/inbox/page.tsx\")",
+      "Bash(cat \"/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(dashboard\\)/integration/appearance/page.tsx\")",
+      "Bash(cat \"/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(dashboard\\)/tickets/customer-escalations/page.tsx\")",
+      "Bash(cat \"/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(dashboard\\)/integration/installation/page.tsx\")",
+      "Bash(cat \"/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(dashboard\\)/page.tsx\")",
+      "Bash(cat \"/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(dashboard\\)/analytics/conversational/page.tsx\")",
+      "Bash(xargs ls:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)"
+    ]
+  }
+}

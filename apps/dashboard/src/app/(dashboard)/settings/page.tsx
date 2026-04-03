@@ -1,5 +1,6 @@
-import { getMerchant } from '@/lib/merchant';
-import { currentUser } from '@clerk/nextjs/server';
+'use client';
+
+import { useState, useEffect } from 'react';
 import {
   Store,
   User,
@@ -12,7 +13,21 @@ import {
   Bell,
   Key,
   Globe,
+  Copy,
+  Loader2,
+  Save,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+
+/* ─── Types ─── */
+interface MerchantData {
+  id: string;
+  shopDomain: string;
+  status: string;
+  planId: string;
+  publishableApiKey: string;
+  createdAt: string;
+}
 
 const PLAN_DETAILS: Record<string, { name: string; price: string; features: string[]; tier: number }> = {
   starter: {
@@ -41,8 +56,60 @@ const PLAN_DETAILS: Record<string, { name: string; price: string; features: stri
   },
 };
 
-export default async function SettingsPage() {
-  const [merchant, user] = await Promise.all([getMerchant(), currentUser()]);
+export default function SettingsPage() {
+  const [merchant, setMerchant] = useState<MerchantData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [copiedKey, setCopiedKey] = useState(false);
+  const [notifications, setNotifications] = useState({
+    escalations: true,
+    weeklyDigest: true,
+    systemHealth: false,
+  });
+  const [savingNotifs, setSavingNotifs] = useState(false);
+  const [savedNotifs, setSavedNotifs] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/merchant')
+      .then((r) => r.json())
+      .then((data) => setMerchant(data.merchant))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  function copyApiKey() {
+    if (merchant?.publishableApiKey) {
+      navigator.clipboard.writeText(merchant.publishableApiKey);
+      setCopiedKey(true);
+      setTimeout(() => setCopiedKey(false), 2000);
+    }
+  }
+
+  async function saveNotifications() {
+    setSavingNotifs(true);
+    // Store in agent_config via appearance endpoint
+    try {
+      await fetch('/api/appearance', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          widgetConfig: { notifications },
+        }),
+      });
+      setSavedNotifs(true);
+      setTimeout(() => setSavedNotifs(false), 2000);
+    } finally {
+      setSavingNotifs(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      </div>
+    );
+  }
+
   if (!merchant) return null;
 
   const plan = PLAN_DETAILS[merchant.planId] ?? PLAN_DETAILS.starter;
@@ -66,27 +133,25 @@ export default async function SettingsPage() {
           </div>
         </div>
         <div className="space-y-0 divide-y divide-[var(--glass-border)]">
-          <SettingRow label="Shop domain" value={merchant.shopDomain} icon={<Globe className="w-3.5 h-3.5" />} />
+          <SettingRow
+            label="Shop domain"
+            value={merchant.shopDomain}
+            icon={<Globe className="w-3.5 h-3.5" />}
+          />
           <SettingRow label="Merchant ID" value={merchant.id} mono />
-          <SettingRow label="Status" value={merchant.status} badge={merchant.status === 'active'} />
-          <SettingRow label="Connected since" value={new Date(merchant.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
-        </div>
-      </div>
-
-      {/* Account */}
-      <div className="glass-card p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-9 h-9 rounded-xl bg-chart-2/10 flex items-center justify-center">
-            <User className="w-4.5 h-4.5 text-chart-2" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">Account</h3>
-            <p className="text-xs text-muted-foreground">Your personal details</p>
-          </div>
-        </div>
-        <div className="space-y-0 divide-y divide-[var(--glass-border)]">
-          <SettingRow label="Email" value={user?.primaryEmailAddress?.emailAddress ?? '\u2014'} />
-          <SettingRow label="Name" value={[user?.firstName, user?.lastName].filter(Boolean).join(' ') || '\u2014'} />
+          <SettingRow
+            label="Status"
+            value={merchant.status}
+            badge={merchant.status === 'active'}
+          />
+          <SettingRow
+            label="Connected since"
+            value={new Date(merchant.createdAt).toLocaleDateString('en-US', {
+              month: 'long',
+              day: 'numeric',
+              year: 'numeric',
+            })}
+          />
         </div>
       </div>
 
@@ -111,7 +176,9 @@ export default async function SettingsPage() {
         <div className="rounded-xl bg-gradient-to-br from-primary/5 to-chart-2/5 border border-[var(--glass-border)] p-5 mb-5">
           <div className="flex items-baseline gap-1.5 mb-4">
             <span className="text-3xl font-bold text-foreground">{plan.price}</span>
-            {plan.price !== 'Custom' && <span className="text-sm text-muted-foreground">per month</span>}
+            {plan.price !== 'Custom' && (
+              <span className="text-sm text-muted-foreground">per month</span>
+            )}
           </div>
           <ul className="space-y-2.5">
             {plan.features.map((f) => (
@@ -135,32 +202,84 @@ export default async function SettingsPage() {
 
       {/* Notifications */}
       <div className="glass-card p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-9 h-9 rounded-xl bg-chart-3/10 flex items-center justify-center">
-            <Bell className="w-4.5 h-4.5 text-chart-3" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
-            <p className="text-xs text-muted-foreground">Configure alert preferences</p>
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-chart-3/10 flex items-center justify-center">
+              <Bell className="w-4.5 h-4.5 text-chart-3" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
+              <p className="text-xs text-muted-foreground">Configure alert preferences</p>
+            </div>
           </div>
         </div>
         <div className="space-y-3">
           {[
-            { label: 'Escalation alerts', desc: 'Get notified when a conversation is escalated', enabled: true },
-            { label: 'Weekly analytics digest', desc: 'Receive a weekly summary of chatbot performance', enabled: true },
-            { label: 'System health alerts', desc: 'Alerts for downtime or performance degradation', enabled: false },
+            {
+              key: 'escalations' as const,
+              label: 'Escalation alerts',
+              desc: 'Get notified when a conversation is escalated',
+            },
+            {
+              key: 'weeklyDigest' as const,
+              label: 'Weekly analytics digest',
+              desc: 'Receive a weekly summary of chatbot performance',
+            },
+            {
+              key: 'systemHealth' as const,
+              label: 'System health alerts',
+              desc: 'Alerts for downtime or performance degradation',
+            },
           ].map((notif) => (
-            <div key={notif.label} className="flex items-center justify-between p-3 rounded-xl hover:bg-accent/20 transition-all">
+            <div
+              key={notif.key}
+              className="flex items-center justify-between p-3 rounded-xl hover:bg-accent/20 transition-all"
+            >
               <div>
                 <p className="text-sm font-medium text-foreground">{notif.label}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">{notif.desc}</p>
               </div>
-              <div className={`w-10 h-6 rounded-full transition-colors cursor-pointer ${notif.enabled ? 'bg-primary' : 'bg-accent'}`}>
-                <div className={`w-4 h-4 rounded-full bg-white shadow-sm mt-1 transition-transform ${notif.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
-              </div>
+              <button
+                onClick={() =>
+                  setNotifications((prev) => ({
+                    ...prev,
+                    [notif.key]: !prev[notif.key],
+                  }))
+                }
+                className={cn(
+                  'w-11 h-6 rounded-full transition-colors relative',
+                  notifications[notif.key] ? 'bg-primary' : 'bg-accent',
+                )}
+              >
+                <div
+                  className={cn(
+                    'w-4 h-4 rounded-full bg-white shadow-sm absolute top-1 transition-transform',
+                    notifications[notif.key] ? 'translate-x-6' : 'translate-x-1',
+                  )}
+                />
+              </button>
             </div>
           ))}
         </div>
+        <button
+          onClick={saveNotifications}
+          disabled={savingNotifs}
+          className="mt-4 w-full py-2.5 rounded-xl border border-primary/30 text-primary text-sm font-semibold hover:bg-primary/5 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          {savingNotifs ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : savedNotifs ? (
+            <>
+              <Check className="w-4 h-4" />
+              Saved!
+            </>
+          ) : (
+            <>
+              <Save className="w-4 h-4" />
+              Save Preferences
+            </>
+          )}
+        </button>
       </div>
 
       {/* API Keys */}
@@ -177,10 +296,27 @@ export default async function SettingsPage() {
         <div className="rounded-xl bg-accent/20 border border-[var(--glass-border)] p-4 flex items-center justify-between">
           <div>
             <p className="text-xs text-muted-foreground">Publishable Key</p>
-            <p className="text-sm font-mono text-foreground mt-0.5">pk_live_...{merchant.id?.slice(-8)}</p>
+            <p className="text-sm font-mono text-foreground mt-0.5">
+              {merchant.publishableApiKey
+                ? `${merchant.publishableApiKey.slice(0, 12)}...${merchant.publishableApiKey.slice(-6)}`
+                : `pk_live_...${merchant.id?.slice(-8)}`}
+            </p>
           </div>
-          <button className="text-xs text-primary font-semibold hover:text-primary/80 transition-colors">
-            Copy
+          <button
+            onClick={copyApiKey}
+            className="flex items-center gap-1.5 text-xs text-primary font-semibold hover:text-primary/80 transition-colors px-3 py-1.5 rounded-lg hover:bg-primary/5"
+          >
+            {copiedKey ? (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                Copied!
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                Copy
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -197,7 +333,8 @@ export default async function SettingsPage() {
           </div>
         </div>
         <p className="text-sm text-muted-foreground mb-4">
-          Uninstalling the Shopify app will freeze your account. Data is permanently deleted after 30 days. To uninstall, go to your Shopify Admin.
+          Uninstalling the Shopify app will freeze your account. Data is permanently deleted after 30
+          days. To uninstall, go to your Shopify Admin.
         </p>
         <a
           href={`https://${merchant.shopDomain}/admin/apps`}
@@ -238,7 +375,9 @@ function SettingRow({
           {value}
         </span>
       ) : (
-        <span className={`text-sm text-foreground ${mono ? 'font-mono text-xs' : 'font-medium'} max-w-[60%] truncate text-right`}>
+        <span
+          className={`text-sm text-foreground ${mono ? 'font-mono text-xs' : 'font-medium'} max-w-[60%] truncate text-right`}
+        >
           {value}
         </span>
       )}
