@@ -23,6 +23,7 @@ import {
   ChevronRight,
   Plus,
   Bot,
+  Shield,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UserButton } from '@clerk/nextjs';
@@ -128,9 +129,10 @@ interface SidebarProps {
   planId?: string;
   userName?: string;
   userImageUrl?: string;
+  isAdmin?: boolean;
 }
 
-export function Sidebar({ shopDomain, planId, userName, userImageUrl }: SidebarProps) {
+export function Sidebar({ shopDomain, planId, userName, userImageUrl, isAdmin }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
 
@@ -239,11 +241,29 @@ export function Sidebar({ shopDomain, planId, userName, userImageUrl }: SidebarP
         {!collapsed && (
           <div className="mt-1 pt-2 border-t border-sidebar-border">
             <NavLink item={{ href: '/settings', label: 'Settings', icon: Settings }} />
+            {isAdmin && (
+              <Link
+                href="/admin"
+                className="group flex items-center gap-3 rounded-xl text-[13px] font-medium transition-all duration-200 px-3 py-2.5 text-red-500 hover:bg-red-500/10 mt-0.5"
+              >
+                <Shield className="w-[18px] h-[18px] flex-shrink-0" />
+                <span className="flex-1">Super Admin</span>
+              </Link>
+            )}
           </div>
         )}
         {collapsed && (
           <div className="mt-1 pt-2 border-t border-sidebar-border">
             <NavLink item={{ href: '/settings', label: 'Settings', icon: Settings }} collapsed />
+            {isAdmin && (
+              <Link
+                href="/admin"
+                title="Super Admin"
+                className="group flex items-center justify-center rounded-xl text-[13px] font-medium transition-all duration-200 px-2 py-2.5 text-red-500 hover:bg-red-500/10 mt-0.5"
+              >
+                <Shield className="w-[18px] h-[18px] flex-shrink-0" />
+              </Link>
+            )}
           </div>
         )}
       </nav>

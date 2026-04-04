@@ -25,6 +25,8 @@ export function createTenantSchema(storeId: string) {
     customerId: text('customer_id'),
     status: text('status').notNull().default('active'),
     totalTokensUsed: integer('total_tokens_used').notNull().default(0),
+    promptTokens: integer('prompt_tokens').notNull().default(0),
+    completionTokens: integer('completion_tokens').notNull().default(0),
     totalTurns: integer('total_turns').notNull().default(0),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),

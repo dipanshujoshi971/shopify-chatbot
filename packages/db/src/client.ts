@@ -72,6 +72,8 @@ export async function provisionTenantSchema(
         "customer_id"        text,
         "status"             text NOT NULL DEFAULT 'active',
         "total_tokens_used"  integer NOT NULL DEFAULT 0,
+        "prompt_tokens"      integer NOT NULL DEFAULT 0,
+        "completion_tokens"  integer NOT NULL DEFAULT 0,
         "total_turns"        integer NOT NULL DEFAULT 0,
         "created_at"         timestamp NOT NULL DEFAULT now(),
         "updated_at"         timestamp NOT NULL DEFAULT now()

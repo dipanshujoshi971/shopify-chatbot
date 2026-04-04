@@ -16,10 +16,9 @@ import { pgPool } from '@/lib/db';
 async function getPerformanceData(merchantId: string) {
   const sn = safeName(merchantId);
   try {
-    const [totalConvs, totalMsgs, totalTokens, convByDay] = await Promise.all([
+    const [totalConvs, totalMsgs, convByDay] = await Promise.all([
       pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '30 days'`),
       pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."messages" WHERE created_at >= NOW() - INTERVAL '30 days'`),
-      pgPool.unsafe(`SELECT COALESCE(SUM(total_tokens_used), 0)::int AS c FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '30 days'`),
       pgPool.unsafe(`
         SELECT EXTRACT(HOUR FROM created_at)::int AS hour,
                COUNT(*)::int AS conversations,
@@ -34,11 +33,10 @@ async function getPerformanceData(merchantId: string) {
     return {
       totalConvs30d: (totalConvs[0] as any)?.c ?? 0,
       totalMsgs30d: (totalMsgs[0] as any)?.c ?? 0,
-      totalTokens30d: (totalTokens[0] as any)?.c ?? 0,
       hourlyData: convByDay as any[],
     };
   } catch {
-    return { totalConvs30d: 0, totalMsgs30d: 0, totalTokens30d: 0, hourlyData: [] };
+    return { totalConvs30d: 0, totalMsgs30d: 0, hourlyData: [] };
   }
 }
 
@@ -66,10 +64,6 @@ export default async function PerformancePage() {
     status: 'operational' as const,
   }));
 
-  // Token efficiency
-  const avgTokensPerConv = data.totalConvs30d > 0
-    ? Math.round(data.totalTokens30d / data.totalConvs30d)
-    : 0;
   const avgMsgsPerConv = data.totalConvs30d > 0
     ? (data.totalMsgs30d / data.totalConvs30d).toFixed(1)
     : '0';
@@ -86,8 +80,8 @@ export default async function PerformancePage() {
         {[
           { label: 'Conversations (30d)', value: data.totalConvs30d.toLocaleString(), icon: Activity, color: 'text-primary bg-primary/10' },
           { label: 'Messages (30d)', value: data.totalMsgs30d.toLocaleString(), icon: Clock, color: 'text-emerald-500 bg-emerald-500/10' },
-          { label: 'Tokens Used (30d)', value: data.totalTokens30d.toLocaleString(), icon: Zap, color: 'text-chart-2 bg-chart-2/10' },
-          { label: 'Avg Tokens/Conv', value: avgTokensPerConv.toLocaleString(), icon: Gauge, color: 'text-chart-4 bg-chart-4/10' },
+          { label: 'Avg Msgs/Conv', value: avgMsgsPerConv, icon: Gauge, color: 'text-chart-2 bg-chart-2/10' },
+          { label: 'System Status', value: 'Operational', icon: Zap, color: 'text-chart-4 bg-chart-4/10' },
         ].map((metric) => (
           <div key={metric.label} className="glass-card p-5">
             <div className="flex items-center justify-between mb-3">
@@ -140,7 +134,6 @@ export default async function PerformancePage() {
           <p className="text-xs text-muted-foreground mb-5">Resource usage per conversation</p>
           <div className="space-y-4">
             {[
-              { label: 'Avg Tokens/Conv', value: avgTokensPerConv, max: 15000, unit: '' },
               { label: 'Avg Messages/Conv', value: Number(avgMsgsPerConv), max: 30, unit: '' },
             ].map((metric) => {
               const pct = Math.min((metric.value / metric.max) * 100, 100);

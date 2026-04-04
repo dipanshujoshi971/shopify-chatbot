@@ -41,8 +41,6 @@ interface Message {
   created_at: string;
 }
 
-const STATUS_FILTERS = ['all', 'active', 'resolved', 'escalated'];
-
 /* ─── Helpers ─── */
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -327,25 +325,6 @@ export default function InboxPage() {
                   className="w-full glass-input rounded-xl pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
               </div>
-              <div className="flex items-center gap-1.5">
-                {STATUS_FILTERS.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => {
-                      setStatus(s);
-                      setPage(1);
-                    }}
-                    className={cn(
-                      'px-2.5 py-1 rounded-lg text-xs font-medium capitalize transition-all',
-                      status === s
-                        ? 'bg-primary/15 text-primary'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-accent/30',
-                    )}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
             </div>
 
             {/* Conversation items */}
@@ -403,8 +382,6 @@ export default function InboxPage() {
                       )}
                       <div className="flex items-center gap-3 text-xs text-muted-foreground ml-[18px]">
                         <span>{conv.total_turns} turns</span>
-                        <span>&middot;</span>
-                        <span>{conv.total_tokens_used.toLocaleString()} tokens</span>
                       </div>
                     </button>
                   ))}
@@ -600,7 +577,7 @@ export default function InboxPage() {
                       </span>
                       <span className="flex items-center gap-1.5">
                         <Hash className="w-3 h-3" />
-                        {selectedConv.total_tokens_used.toLocaleString()} tokens
+                        {selectedConv.total_turns} turns
                       </span>
                     </div>
                     <span className="flex items-center gap-1.5">

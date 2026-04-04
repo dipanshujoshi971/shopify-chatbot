@@ -2,7 +2,6 @@ import {
   Activity,
   MessageSquare,
   Users,
-  Zap,
   TrendingUp,
   ArrowUpRight,
   ArrowDownRight,
@@ -22,14 +21,13 @@ import Link from 'next/link';
 async function getOverviewData(merchantId: string) {
   const sn = safeName(merchantId);
   try {
-    const [convToday, convWeek, msgWeek, tokenWeek, active, recentConvs, convPrevWeek, msgPrevWeek, ticketCount] =
+    const [convToday, convWeek, msgWeek, active, recentConvs, convPrevWeek, msgPrevWeek, ticketCount] =
       await Promise.all([
         pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '1 day'`),
         pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '7 days'`),
         pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."messages" WHERE created_at >= NOW() - INTERVAL '7 days'`),
-        pgPool.unsafe(`SELECT COALESCE(SUM(total_tokens_used),0)::int AS c FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '7 days'`),
         pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations" WHERE status='active' AND updated_at >= NOW() - INTERVAL '1 hour'`),
-        pgPool.unsafe(`SELECT id, session_id, customer_id, status, total_turns, total_tokens_used, created_at FROM "tenant_${sn}"."conversations" ORDER BY created_at DESC LIMIT 6`),
+        pgPool.unsafe(`SELECT id, session_id, customer_id, status, total_turns, created_at FROM "tenant_${sn}"."conversations" ORDER BY created_at DESC LIMIT 6`),
         pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations" WHERE created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days'`),
         pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."messages" WHERE created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days'`),
         pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."support_tickets" WHERE status != 'resolved'`).catch(() => [{ c: 0 }]),
@@ -38,7 +36,6 @@ async function getOverviewData(merchantId: string) {
       convToday:    (convToday[0] as any)?.c    ?? 0,
       convWeek:     (convWeek[0] as any)?.c     ?? 0,
       msgWeek:      (msgWeek[0] as any)?.c      ?? 0,
-      tokenWeek:    (tokenWeek[0] as any)?.c    ?? 0,
       active:       (active[0] as any)?.c       ?? 0,
       recentConvs:  recentConvs as any[],
       convPrevWeek: (convPrevWeek[0] as any)?.c ?? 0,
@@ -46,7 +43,7 @@ async function getOverviewData(merchantId: string) {
       openTickets:  (ticketCount[0] as any)?.c  ?? 0,
     };
   } catch {
-    return { convToday: 0, convWeek: 0, msgWeek: 0, tokenWeek: 0, active: 0, recentConvs: [], convPrevWeek: 0, msgPrevWeek: 0, openTickets: 0 };
+    return { convToday: 0, convWeek: 0, msgWeek: 0, active: 0, recentConvs: [], convPrevWeek: 0, msgPrevWeek: 0, openTickets: 0 };
   }
 }
 
@@ -98,10 +95,9 @@ export default async function DashboardPage() {
       accent: false,
     },
     {
-      label: 'Tokens Used',
-      sublabel: '7 days',
-      value: data.tokenWeek.toLocaleString(),
-      icon: Zap,
+      label: 'Open Tickets',
+      value: data.openTickets,
+      icon: AlertTriangle,
       trend: null,
       accent: false,
     },

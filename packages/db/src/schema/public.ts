@@ -36,6 +36,22 @@ export const auditLog = pgTable('audit_log', {
   index('audit_log_action_idx').on(table.action),
 ]);
 
+// Token usage — daily aggregated token consumption per merchant (populated by cron/API)
+export const tokenUsageDaily = pgTable('token_usage_daily', {
+  id: text('id').primaryKey(),
+  merchantId: text('merchant_id').notNull(),
+  date: timestamp('date').notNull(),              // truncated to day
+  totalTokens: integer('total_tokens').notNull().default(0),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  totalConversations: integer('total_conversations').notNull().default(0),
+  totalMessages: integer('total_messages').notNull().default(0),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('token_usage_daily_merchant_idx').on(table.merchantId),
+  index('token_usage_daily_date_idx').on(table.date),
+]);
+
 // Webhook events — platform-level idempotency for Stripe + app/uninstalled
 // Per-tenant Shopify webhook dedup lives in each tenant schema
 export const webhookEvents = pgTable('webhook_events', {

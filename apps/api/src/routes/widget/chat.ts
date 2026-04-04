@@ -336,16 +336,56 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
           }
         },
 
-        onFinish: async ({ text, usage }) => {
+        onFinish: async ({ text, usage, steps }) => {
           // FIX: close first so the HTTP stream terminates before the DB
           // writes — the client never waits for DB persistence anyway.
           closeStreamData();
 
-          // FIX: Guard against NaN. With OpenAI multi-step tool calls,
-          // usage can contain undefined values. undefined + undefined = NaN,
-          // which Postgres rejects as "invalid input syntax for type integer".
-          const rawTokens  = (usage?.promptTokens ?? 0) + (usage?.completionTokens ?? 0);
-          const tokensUsed = Number.isFinite(rawTokens) ? rawTokens : 0;
+          // Helper: safely extract a number, treating NaN/undefined/null as 0.
+          // CRITICAL: The `??` operator does NOT catch NaN (NaN is not null/undefined),
+          // so `NaN ?? 0` still returns NaN. We must use Number.isFinite explicitly.
+          const safeNum = (v: unknown): number => {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : 0;
+          };
+
+          // Accumulate tokens across ALL steps for multi-step tool calls.
+          // With maxSteps > 1, `usage` only reports the last step's tokens.
+          let promptTokensTotal = 0;
+          let completionTokensTotal = 0;
+          if (steps && steps.length > 0) {
+            for (const step of steps) {
+              promptTokensTotal += safeNum(step.usage?.promptTokens);
+              completionTokensTotal += safeNum(step.usage?.completionTokens);
+            }
+          }
+          // Fallback: if steps didn't yield tokens, try the top-level usage
+          if (promptTokensTotal === 0 && completionTokensTotal === 0) {
+            promptTokensTotal = safeNum(usage?.promptTokens);
+            completionTokensTotal = safeNum(usage?.completionTokens);
+          }
+          const tokensUsed = promptTokensTotal + completionTokensTotal;
+
+          request.log.info(
+            {
+              tenantId,
+              conversationId,
+              tokensUsed,
+              promptTokens: promptTokensTotal,
+              completionTokens: completionTokensTotal,
+              totalSteps: steps?.length ?? 1,
+              stepsUsage: steps?.map((s, i) => ({
+                step: i,
+                prompt: s.usage?.promptTokens,
+                completion: s.usage?.completionTokens,
+              })),
+              finalUsage: {
+                prompt: usage?.promptTokens,
+                completion: usage?.completionTokens,
+              },
+            },
+            'chat: token accounting',
+          );
 
           const newTurns  = currentTurns + 1;
           const newTokens = currentTotalTokens + tokensUsed;
@@ -374,18 +414,20 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
 
             await pgPool.unsafe(
               `UPDATE "tenant_${safeName}"."conversations"
-                  SET total_tokens_used = total_tokens_used + $1,
-                      total_turns       = total_turns + 1,
-                      updated_at        = now()
-                WHERE id = $2`,
-              [tokensUsed, conversationId],
+                  SET total_tokens_used  = total_tokens_used + $1,
+                      prompt_tokens      = prompt_tokens + $2,
+                      completion_tokens  = completion_tokens + $3,
+                      total_turns        = total_turns + 1,
+                      updated_at         = now()
+                WHERE id = $4`,
+              [tokensUsed, promptTokensTotal, completionTokensTotal, conversationId],
             );
           } catch (err) {
             request.log.error({ err, tenantId, conversationId }, 'chat: onFinish DB write failed');
           }
 
           request.log.info(
-            { tenantId, conversationId, ...llmInfo, ...usage },
+            { tenantId, conversationId, ...llmInfo, tokensUsed, totalSteps: steps?.length ?? 1 },
             'chat_stream_finish',
           );
         },
@@ -393,6 +435,69 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
 
       // ── 11. Stream response to client ─────────────────────────────────────
       const nodeStream = Readable.fromWeb(result.toDataStream({ data: streamData }) as any);
+
+      // Fire-and-forget: use result.steps promise as a backup token tracker.
+      // This resolves after the stream completes and gives accurate usage
+      // even if onFinish has edge cases with NaN values.
+      result.steps.then(async (resolvedSteps) => {
+        const safeN = (v: unknown): number => {
+          const n = Number(v);
+          return Number.isFinite(n) ? n : 0;
+        };
+        let backupPrompt = 0;
+        let backupCompletion = 0;
+        for (const step of resolvedSteps) {
+          backupPrompt += safeN(step.usage?.promptTokens);
+          backupCompletion += safeN(step.usage?.completionTokens);
+        }
+        const backupTokens = backupPrompt + backupCompletion;
+        request.log.info(
+          {
+            tenantId,
+            conversationId,
+            backupTokens,
+            backupPrompt,
+            backupCompletion,
+            stepsCount: resolvedSteps.length,
+            rawStepUsage: resolvedSteps.map((s, i) => ({
+              step: i,
+              prompt: s.usage?.promptTokens,
+              completion: s.usage?.completionTokens,
+            })),
+          },
+          'chat: backup token check via result.steps',
+        );
+        // If onFinish wrote 0 tokens but we got real tokens here, patch the DB
+        if (backupTokens > 0) {
+          try {
+            const [row] = await pgPool.unsafe(
+              `SELECT total_tokens_used FROM "tenant_${safeName}"."conversations" WHERE id = $1`,
+              [conversationId],
+            ) as any[];
+            const currentTokens = row?.total_tokens_used ?? 0;
+            // If the DB still has the value from before this turn (i.e. onFinish wrote 0)
+            if (currentTokens === currentTotalTokens) {
+              await pgPool.unsafe(
+                `UPDATE "tenant_${safeName}"."conversations"
+                    SET total_tokens_used  = total_tokens_used + $1,
+                        prompt_tokens      = prompt_tokens + $2,
+                        completion_tokens  = completion_tokens + $3,
+                        updated_at         = now()
+                  WHERE id = $4`,
+                [backupTokens, backupPrompt, backupCompletion, conversationId],
+              );
+              request.log.info(
+                { tenantId, conversationId, backupTokens, backupPrompt, backupCompletion },
+                'chat: patched token count via backup',
+              );
+            }
+          } catch (err) {
+            request.log.warn({ err }, 'chat: backup token patch failed');
+          }
+        }
+      }).catch((err) => {
+        request.log.warn({ err }, 'chat: result.steps promise rejected');
+      });
 
       return reply
         .header('Content-Type',            'text/plain; charset=utf-8')

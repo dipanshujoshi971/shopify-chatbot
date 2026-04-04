@@ -1,4 +1,5 @@
 import { getMerchant } from '@/lib/merchant';
+import { isSuperAdmin } from '@/lib/admin';
 import { currentUser } from '@clerk/nextjs/server';
 import { Sidebar, MobileNav } from '@/components/dashboard/sidebar';
 import { Header } from '@/components/dashboard/header';
@@ -10,7 +11,7 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [merchant, user] = await Promise.all([getMerchant(), currentUser()]);
+  const [merchant, user, isAdmin] = await Promise.all([getMerchant(), currentUser(), isSuperAdmin()]);
 
   if (!merchant) {
     return <ConnectStoreForm />;
@@ -31,6 +32,7 @@ export default async function DashboardLayout({
         planId={merchant.planId}
         userName={user?.firstName ? `${user.firstName} ${user.lastName ?? ''}`.trim() : undefined}
         userImageUrl={user?.imageUrl}
+        isAdmin={isAdmin}
       />
 
       {/* Main content */}

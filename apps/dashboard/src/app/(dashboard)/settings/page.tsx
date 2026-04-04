@@ -11,9 +11,7 @@ import {
   Sparkles,
   Crown,
   Bell,
-  Key,
   Globe,
-  Copy,
   Loader2,
   Save,
 } from 'lucide-react';
@@ -25,7 +23,6 @@ interface MerchantData {
   shopDomain: string;
   status: string;
   planId: string;
-  publishableApiKey: string;
   createdAt: string;
 }
 
@@ -34,19 +31,19 @@ const PLAN_DETAILS: Record<string, { name: string; price: string; features: stri
     name: 'Starter',
     price: '$29/mo',
     tier: 1,
-    features: ['10,000 tokens/conversation', 'Unlimited conversations', 'Product search', 'Order tracking'],
+    features: ['Unlimited conversations', 'Product search', 'Order tracking', 'Email support'],
   },
   growth: {
     name: 'Growth',
     price: '$79/mo',
     tier: 2,
-    features: ['50,000 tokens/conversation', 'Priority support', 'Analytics dashboard', 'Custom instructions'],
+    features: ['Priority support', 'Analytics dashboard', 'Custom instructions', 'Advanced AI'],
   },
   pro: {
     name: 'Pro',
     price: '$175/mo',
     tier: 3,
-    features: ['Unlimited tokens', 'White-label widget', 'API access', 'SLA guarantee'],
+    features: ['White-label widget', 'API access', 'SLA guarantee', 'Dedicated support'],
   },
   enterprise: {
     name: 'Enterprise',
@@ -59,7 +56,6 @@ const PLAN_DETAILS: Record<string, { name: string; price: string; features: stri
 export default function SettingsPage() {
   const [merchant, setMerchant] = useState<MerchantData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [copiedKey, setCopiedKey] = useState(false);
   const [notifications, setNotifications] = useState({
     escalations: true,
     weeklyDigest: true,
@@ -75,14 +71,6 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-
-  function copyApiKey() {
-    if (merchant?.publishableApiKey) {
-      navigator.clipboard.writeText(merchant.publishableApiKey);
-      setCopiedKey(true);
-      setTimeout(() => setCopiedKey(false), 2000);
-    }
-  }
 
   async function saveNotifications() {
     setSavingNotifs(true);
@@ -280,45 +268,6 @@ export default function SettingsPage() {
             </>
           )}
         </button>
-      </div>
-
-      {/* API Keys */}
-      <div className="glass-card p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-9 h-9 rounded-xl bg-chart-5/10 flex items-center justify-center">
-            <Key className="w-4.5 h-4.5 text-chart-5" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">API Keys</h3>
-            <p className="text-xs text-muted-foreground">Manage your API access tokens</p>
-          </div>
-        </div>
-        <div className="rounded-xl bg-accent/20 border border-[var(--glass-border)] p-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs text-muted-foreground">Publishable Key</p>
-            <p className="text-sm font-mono text-foreground mt-0.5">
-              {merchant.publishableApiKey
-                ? `${merchant.publishableApiKey.slice(0, 12)}...${merchant.publishableApiKey.slice(-6)}`
-                : `pk_live_...${merchant.id?.slice(-8)}`}
-            </p>
-          </div>
-          <button
-            onClick={copyApiKey}
-            className="flex items-center gap-1.5 text-xs text-primary font-semibold hover:text-primary/80 transition-colors px-3 py-1.5 rounded-lg hover:bg-primary/5"
-          >
-            {copiedKey ? (
-              <>
-                <Check className="w-3.5 h-3.5" />
-                Copied!
-              </>
-            ) : (
-              <>
-                <Copy className="w-3.5 h-3.5" />
-                Copy
-              </>
-            )}
-          </button>
-        </div>
       </div>
 
       {/* Danger zone */}

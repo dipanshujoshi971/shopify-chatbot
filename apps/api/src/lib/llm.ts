@@ -52,7 +52,14 @@ function getOpenAIProvider(): ReturnType<typeof createOpenAI> {
         'Add OPENAI_API_KEY to your .env file.',
       );
     }
-    _openai = createOpenAI({ apiKey: env.OPENAI_API_KEY });
+    _openai = createOpenAI({
+      apiKey: env.OPENAI_API_KEY,
+      // CRITICAL: 'strict' mode tells the SDK to send
+      // `stream_options: { include_usage: true }` to OpenAI.
+      // Without this, OpenAI streams return NO token usage data,
+      // causing promptTokens/completionTokens to be NaN → 0.
+      compatibility: 'strict',
+    });
   }
   return _openai;
 }

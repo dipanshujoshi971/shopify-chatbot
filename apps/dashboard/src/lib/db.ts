@@ -4,7 +4,7 @@
 
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { merchants, auditLog, webhookEvents } from '@chatbot/db';
+import { merchants, auditLog, webhookEvents, tokenUsageDaily } from '@chatbot/db';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -25,5 +25,5 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 export const db = drizzle(pgPool, {
-  schema: { merchants, auditLog, webhookEvents },
+  schema: { merchants, auditLog, webhookEvents, tokenUsageDaily },
 });

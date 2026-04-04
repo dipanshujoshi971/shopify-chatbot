@@ -10,7 +10,24 @@
       "Bash(xargs ls:*)",
       "Bash(npx tsc:*)",
       "Bash(npm run:*)",
-      "Bash(xargs head:*)"
+      "Bash(xargs head:*)",
+      "Bash(npx next:*)",
+      "WebSearch",
+      "WebFetch(domain:sdk.vercel.ai)",
+      "WebFetch(domain:ai-sdk.dev)",
+      "Bash(grep '\"\"ai\"\"' package.json)",
+      "Bash(node -e \"console.log\\(require\\(''./apps/api/node_modules/ai/package.json''\\).version\\)\")",
+      "Bash(node -e \"console.log\\(require\\(''./node_modules/ai/package.json''\\).version\\)\")",
+      "Bash(node -e \"console.log\\(require\\(''./node_modules/@ai-sdk/anthropic/package.json''\\).version\\)\")",
+      "Bash(node -e \"console.log\\(require\\(''./node_modules/@ai-sdk/openai/package.json''\\).version\\)\")",
+      "Bash(ls -la '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/')",
+      "Bash(cat '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/page.tsx')",
+      "Bash(cat '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/token-usage/page.tsx')",
+      "Bash(cat '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/merchants/page.tsx')",
+      "Bash(cat '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/merchants/\\\\[id\\\\]/page.tsx')",
+      "Bash(ls -la '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/merchants/')",
+      "Bash(cat '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/merchants/[id]/page.tsx')",
+      "Bash(ls \"C:\\\\Users\\\\deepj\\\\OneDrive\\\\Documents\\\\chatbot\\\\shopify-chatbot\\\\packages\\\\db\\\\src\\\\migrations\"\" 2>/dev/null || echo \"no migrations dir \")"
     ]
   }
 }

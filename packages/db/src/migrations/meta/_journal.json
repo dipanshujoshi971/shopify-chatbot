@@ -15,6 +15,13 @@
       "when": 1774695267223,
       "tag": "0001_perpetual_thor_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775286331631,
+      "tag": "0002_damp_storm",
+      "breakpoints": true
     }
   ]
 }

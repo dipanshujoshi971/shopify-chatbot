@@ -192,7 +192,7 @@ export default async function ConversationalAnalyticsPage() {
                       {s.session_id?.slice(0, 16)}...
                     </p>
                     <p className="text-[10px] text-muted-foreground">
-                      {s.total_turns} turns &middot; {s.total_tokens_used?.toLocaleString()} tokens
+                      {s.total_turns} turns &middot; {s.status}
                     </p>
                   </div>
                   <span className={cn(
