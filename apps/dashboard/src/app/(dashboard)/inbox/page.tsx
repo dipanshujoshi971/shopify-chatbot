@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   MessageSquare,
   Search,
@@ -8,17 +8,13 @@ import {
   User,
   Clock,
   Loader2,
-  Send,
-  MoreHorizontal,
-  AlertTriangle,
-  CheckCircle2,
-  Circle,
   Ticket,
   X,
-  Mail,
   Hash,
-  ArrowUpRight,
   ChevronLeft,
+  CheckCircle2,
+  Calendar,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -41,6 +37,15 @@ interface Message {
   created_at: string;
 }
 
+/** A customer group (guest or logged-in) with all their sessions */
+interface CustomerGroup {
+  customer: string;
+  isGuest: boolean;
+  sessions: Conversation[];
+  totalTurns: number;
+  latestTime: string;
+}
+
 /* ─── Helpers ─── */
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -54,47 +59,61 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString();
 }
 
+function formatDateLabel(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function formatTimeLabel(dateStr: string): string {
+  return new Date(dateStr).toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function getDateKey(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-CA'); // YYYY-MM-DD
+}
+
 function parseMessageContent(content: string): string {
   try {
     const parsed = JSON.parse(content);
     if (typeof parsed === 'string') return parsed;
-    if (parsed.text) return parsed.text;
+    if (parsed.type === 'text' && typeof parsed.text === 'string') return parsed.text;
+    if (parsed.text && typeof parsed.text === 'string') return parsed.text;
     if (Array.isArray(parsed)) {
-      return parsed
+      const parts = parsed
         .map((item: any) => {
           if (typeof item === 'string') return item;
+          if (item.type === 'text' && item.text) return item.text;
           if (item.text) return item.text;
           if (item.type === 'tool-call') return `[Tool: ${item.toolName}]`;
+          if (item.type === 'tool-result') return `[Result: ${item.toolName}]`;
           return '';
         })
-        .filter(Boolean)
-        .join('\n');
+        .filter(Boolean);
+      return parts.join('\n');
     }
+    if (parsed.type === 'tool-call' || parsed.type === 'tool_call') return `[Tool: ${parsed.toolName ?? 'unknown'}]`;
+    if (parsed.type === 'tool-result' || parsed.type === 'tool_result') return '';
     return JSON.stringify(parsed);
   } catch {
     return content;
   }
 }
 
-function StatusIcon({ status }: { status: string }) {
-  switch (status) {
-    case 'active':
-      return <Circle className="w-2.5 h-2.5 text-emerald-500 fill-emerald-500" />;
-    case 'escalated':
-      return <AlertTriangle className="w-2.5 h-2.5 text-amber-500" />;
-    case 'resolved':
-      return <CheckCircle2 className="w-2.5 h-2.5 text-muted-foreground" />;
-    default:
-      return <Circle className="w-2.5 h-2.5 text-muted-foreground" />;
-  }
-}
-
 /* ─── Ticket Modal ─── */
 function TicketModal({
   conversationId,
+  sessionLabel,
   onClose,
 }: {
   conversationId: string;
+  sessionLabel: string;
   onClose: () => void;
 }) {
   const [subject, setSubject] = useState('');
@@ -138,8 +157,8 @@ function TicketModal({
               <Ticket className="w-4.5 h-4.5 text-primary" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-foreground">Raise Ticket to Admin</h3>
-              <p className="text-xs text-muted-foreground">Report an issue with this conversation</p>
+              <h3 className="text-sm font-semibold text-foreground">Raise Ticket</h3>
+              <p className="text-xs text-muted-foreground">Report issue — {sessionLabel}</p>
             </div>
           </div>
           <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent">
@@ -197,13 +216,9 @@ function TicketModal({
                 onChange={(e) => setMessage(e.target.value)}
                 rows={4}
                 required
-                placeholder="What went wrong with this conversation? What should be improved?"
+                placeholder="What went wrong with this conversation?"
                 className="w-full glass-input rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
               />
-            </div>
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground bg-accent/20 rounded-lg px-3 py-2">
-              <Hash className="w-3 h-3 flex-shrink-0" />
-              <span>Conversation ID: {conversationId.slice(0, 16)}...</span>
             </div>
             <button
               type="submit"
@@ -224,73 +239,185 @@ export default function InboxPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [status, setStatus] = useState('all');
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+
+  // Selection state
+  const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
+  const [selectedSessionDate, setSelectedSessionDate] = useState('');
+  const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
+  const [mobileShowDetail, setMobileShowDetail] = useState(false);
+
+  // Messages
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+
+  // Ticket
   const [showTicketModal, setShowTicketModal] = useState(false);
-  const [mobileShowDetail, setMobileShowDetail] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // ── Load conversations ──
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/conversations?page=${page}&status=${status}`);
+      const res = await fetch(`/api/conversations?page=${page}&limit=100`);
       const data = (await res.json()) as { conversations: Conversation[]; total: number };
       setConversations(data.conversations);
       setTotal(data.total);
-      if (data.conversations.length > 0 && !selected) {
-        setSelected(data.conversations[0].id);
-      }
     } finally {
       setLoading(false);
     }
-  }, [page, status]);
+  }, [page]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
-  // Load messages for selected conversation
+  // ── Group conversations by customer ──
+  const customerGroups: CustomerGroup[] = useMemo(() => {
+    const grouped: Record<string, CustomerGroup> = {};
+
+    // All non-customer conversations go under "Guest"
+    const GUEST_KEY = '__guest__';
+
+    for (const conv of conversations) {
+      const key = conv.customer_id || GUEST_KEY;
+      if (!grouped[key]) {
+        grouped[key] = {
+          customer: conv.customer_id || 'Guest',
+          isGuest: !conv.customer_id,
+          sessions: [],
+          totalTurns: 0,
+          latestTime: conv.created_at,
+        };
+      }
+      grouped[key].sessions.push(conv);
+      grouped[key].totalTurns += conv.total_turns;
+      if (new Date(conv.created_at) > new Date(grouped[key].latestTime)) {
+        grouped[key].latestTime = conv.created_at;
+      }
+    }
+
+    // Sort sessions within each group by time desc
+    for (const g of Object.values(grouped)) {
+      g.sessions.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }
+
+    return Object.values(grouped).sort(
+      (a, b) => new Date(b.latestTime).getTime() - new Date(a.latestTime).getTime(),
+    );
+  }, [conversations]);
+
+  // ── Filter by search ──
+  const filteredGroups = useMemo(() => {
+    if (!search) return customerGroups;
+    const q = search.toLowerCase();
+    return customerGroups.filter((g) =>
+      g.customer.toLowerCase().includes(q) ||
+      g.sessions.some((s) => s.session_id.toLowerCase().includes(q)),
+    );
+  }, [customerGroups, search]);
+
+  // ── Selected customer's sessions ──
+  const selectedGroup = useMemo(
+    () => customerGroups.find((g) => g.customer === selectedCustomer) ?? null,
+    [customerGroups, selectedCustomer],
+  );
+
+  // ── Date options for selected customer's sessions ──
+  const dateOptions = useMemo(() => {
+    if (!selectedGroup) return [];
+    const dateMap = new Map<string, string>();
+    for (const s of selectedGroup.sessions) {
+      const key = getDateKey(s.created_at);
+      if (!dateMap.has(key)) dateMap.set(key, s.created_at);
+    }
+    return Array.from(dateMap.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([key, ts]) => ({ key, label: formatDateLabel(ts) }));
+  }, [selectedGroup]);
+
+  // ── Sessions for the selected date ──
+  const sessionsForDate = useMemo(() => {
+    if (!selectedGroup || !selectedSessionDate) return [];
+    return selectedGroup.sessions.filter(
+      (s) => getDateKey(s.created_at) === selectedSessionDate,
+    );
+  }, [selectedGroup, selectedSessionDate]);
+
+  // ── Load messages when conversation selected ──
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedConvId) return;
     setLoadingMessages(true);
-    fetch(`/api/conversations/${selected}`)
+    fetch(`/api/conversations/${selectedConvId}`)
       .then((r) => r.json())
-      .then((data) => {
-        setMessages(data.messages ?? []);
-      })
+      .then((data) => setMessages(data.messages ?? []))
       .catch(() => setMessages([]))
       .finally(() => setLoadingMessages(false));
-  }, [selected]);
+  }, [selectedConvId]);
 
-  // Auto-scroll to bottom
+  // ── Auto-scroll ──
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const totalPages = Math.max(1, Math.ceil(total / 20));
-  const selectedConv = conversations.find((c) => c.id === selected);
+  // ── Handlers ──
+  const handleSelectCustomer = useCallback((group: CustomerGroup) => {
+    setSelectedCustomer(group.customer);
+    setMobileShowDetail(true);
 
-  // Filter by search
-  const filtered = search
-    ? conversations.filter(
-        (c) =>
-          c.session_id.toLowerCase().includes(search.toLowerCase()) ||
-          c.customer_id?.toLowerCase().includes(search.toLowerCase()),
-      )
-    : conversations;
+    // Auto-select latest date + session
+    const latest = group.sessions[0];
+    if (latest) {
+      const dateKey = getDateKey(latest.created_at);
+      setSelectedSessionDate(dateKey);
+      setSelectedConvId(latest.id);
+    } else {
+      setSelectedSessionDate('');
+      setSelectedConvId(null);
+      setMessages([]);
+    }
+  }, []);
+
+  const handleDateChange = useCallback((dateKey: string) => {
+    setSelectedSessionDate(dateKey);
+    if (!selectedGroup) return;
+    const sessionsOnDate = selectedGroup.sessions.filter(
+      (s) => getDateKey(s.created_at) === dateKey,
+    );
+    if (sessionsOnDate.length > 0) {
+      setSelectedConvId(sessionsOnDate[0].id);
+    } else {
+      setSelectedConvId(null);
+      setMessages([]);
+    }
+  }, [selectedGroup]);
+
+  const handleBack = useCallback(() => {
+    setSelectedCustomer(null);
+    setSelectedConvId(null);
+    setSelectedSessionDate('');
+    setMessages([]);
+    setMobileShowDetail(false);
+  }, []);
+
+  const selectedConv = conversations.find((c) => c.id === selectedConvId);
+  const totalPages = Math.max(1, Math.ceil(total / 100));
 
   return (
     <div className="max-w-7xl -mt-2">
       <div className="mb-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-foreground">Inbox</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">{total} total conversations</p>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <MessageSquare className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-foreground">Inbox</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {total} conversations &middot; {customerGroups.length} customers
+            </p>
+          </div>
         </div>
-        {selectedConv && (
+        {selectedConvId && (
           <button
             onClick={() => setShowTicketModal(true)}
             className="hidden md:flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
@@ -306,82 +433,77 @@ export default function InboxPage() {
         style={{ height: 'calc(100vh - 200px)', minHeight: '500px' }}
       >
         <div className="flex h-full">
-          {/* ─ Conversation list ─ */}
+          {/* ─ Customer list (left panel) ─ */}
           <div
             className={cn(
-              'w-full md:w-[360px] border-r border-[var(--glass-border)] flex flex-col',
+              'w-full md:w-[320px] lg:w-[360px] border-r border-[var(--glass-border)] flex flex-col flex-shrink-0',
               mobileShowDetail && 'hidden md:flex',
             )}
           >
-            {/* Search & filters */}
-            <div className="p-3 border-b border-[var(--glass-border)] space-y-2">
+            {/* Search */}
+            <div className="p-3 border-b border-[var(--glass-border)]">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by session or customer..."
+                  placeholder="Search customers or session ID..."
                   className="w-full glass-input rounded-xl pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
               </div>
             </div>
 
-            {/* Conversation items */}
+            {/* Customer items */}
             <div className="flex-1 overflow-y-auto">
               {loading ? (
                 <div className="flex items-center justify-center py-20">
                   <Loader2 className="w-5 h-5 text-primary animate-spin" />
                 </div>
-              ) : filtered.length === 0 ? (
+              ) : filteredGroups.length === 0 ? (
                 <div className="py-20 text-center px-4">
                   <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-3">
                     <MessageSquare className="w-6 h-6 text-primary" />
                   </div>
                   <p className="text-sm text-muted-foreground">No conversations found</p>
-                  <p className="text-xs text-muted-foreground/60 mt-1">
-                    Install the widget to start receiving chats
-                  </p>
                 </div>
               ) : (
                 <div className="divide-y divide-[var(--glass-border)]">
-                  {filtered.map((conv) => (
+                  {filteredGroups.map((group) => (
                     <button
-                      key={conv.id}
-                      onClick={() => {
-                        setSelected(conv.id);
-                        setMobileShowDetail(true);
-                      }}
+                      key={group.customer}
+                      onClick={() => handleSelectCustomer(group)}
                       className={cn(
-                        'w-full text-left px-4 py-3.5 transition-all',
-                        selected === conv.id
+                        'w-full text-left px-4 py-3.5 transition-all flex items-center gap-3',
+                        selectedCustomer === group.customer
                           ? 'bg-primary/5 border-l-2 border-l-primary'
                           : 'hover:bg-accent/20 border-l-2 border-l-transparent',
                       )}
                     >
-                      <div className="flex items-start justify-between mb-1.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <StatusIcon status={conv.status} />
-                          <span className="text-sm font-medium text-foreground truncate">
-                            {conv.customer_id
-                              ? `Customer ${conv.customer_id.slice(0, 10)}`
-                              : `Guest ${conv.session_id.slice(0, 10)}...`}
+                      {/* Avatar */}
+                      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        {group.isGuest ? (
+                          <Users className="w-4.5 h-4.5 text-primary" />
+                        ) : (
+                          <span className="text-sm font-bold text-primary">
+                            {group.customer.charAt(0).toUpperCase()}
                           </span>
-                        </div>
-                        <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-2">
-                          {timeAgo(conv.created_at)}
-                        </span>
+                        )}
                       </div>
-                      {conv.customer_id && (
-                        <div className="flex items-center gap-1.5 ml-[18px] mb-1">
-                          <Mail className="w-3 h-3 text-muted-foreground/50" />
-                          <span className="text-[10px] text-muted-foreground truncate">
-                            ID: {conv.customer_id}
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="text-sm font-semibold text-foreground truncate">
+                            {group.isGuest ? 'Guest Chats' : group.customer}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-2">
+                            {timeAgo(group.latestTime)}
                           </span>
                         </div>
-                      )}
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground ml-[18px]">
-                        <span>{conv.total_turns} turns</span>
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                          <span>{group.sessions.length} session{group.sessions.length !== 1 ? 's' : ''}</span>
+                          <span>{group.totalTurns} turns</span>
+                        </div>
                       </div>
                     </button>
                   ))}
@@ -395,17 +517,15 @@ export default function InboxPage() {
                 <button
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page === 1}
-                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
+                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30"
                 >
                   Previous
                 </button>
-                <span className="text-xs text-muted-foreground">
-                  {page}/{totalPages}
-                </span>
+                <span className="text-xs text-muted-foreground">{page}/{totalPages}</span>
                 <button
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={page === totalPages}
-                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
+                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30"
                 >
                   Next
                 </button>
@@ -413,68 +533,80 @@ export default function InboxPage() {
             )}
           </div>
 
-          {/* ─ Conversation detail ─ */}
+          {/* ─ Chat detail (right panel) ─ */}
           <div
             className={cn(
-              'flex-1 flex-col',
+              'flex-1 flex-col min-w-0',
               mobileShowDetail ? 'flex' : 'hidden md:flex',
             )}
           >
-            {selectedConv ? (
+            {selectedCustomer && selectedGroup ? (
               <>
-                {/* Detail header */}
-                <div className="px-4 md:px-6 py-4 border-b border-[var(--glass-border)] flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {/* Mobile back button */}
+                {/* Header with date/time selectors */}
+                <div className="px-4 md:px-6 py-3 border-b border-[var(--glass-border)] flex items-center justify-between gap-3 flex-shrink-0">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Mobile back */}
                     <button
-                      onClick={() => setMobileShowDetail(false)}
+                      onClick={handleBack}
                       className="md:hidden w-8 h-8 rounded-xl flex items-center justify-center text-muted-foreground hover:bg-accent"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <div
-                      className={cn(
-                        'w-9 h-9 rounded-xl flex items-center justify-center',
-                        selectedConv.status === 'active'
-                          ? 'bg-emerald-500/15 text-emerald-500'
-                          : 'bg-muted text-muted-foreground',
-                      )}
-                    >
-                      <Bot className="w-4.5 h-4.5" />
+                    <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                      <Bot className="w-4.5 h-4.5 text-primary" />
                     </div>
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">
-                        {selectedConv.customer_id
-                          ? `Customer ${selectedConv.customer_id.slice(0, 12)}`
-                          : `Guest ${selectedConv.session_id.slice(0, 12)}...`}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-foreground truncate">
+                        {selectedGroup.isGuest ? 'Guest Chat' : selectedGroup.customer}
                       </p>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span
-                          className={cn(
-                            'text-[11px] px-2 py-0.5 rounded-full font-semibold capitalize',
-                            selectedConv.status === 'active'
-                              ? 'bg-emerald-500/15 text-emerald-500'
-                              : selectedConv.status === 'escalated'
-                                ? 'bg-amber-500/15 text-amber-500'
-                                : 'bg-muted text-muted-foreground',
-                          )}
-                        >
-                          {selectedConv.status}
-                        </span>
-                        <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {timeAgo(selectedConv.created_at)}
-                        </span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {selectedConv.total_turns} turns
-                        </span>
-                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {messages.filter((m) => m.role !== 'tool').length} messages
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* Date selector */}
+                    <div className="flex items-center gap-1.5 bg-accent/30 rounded-lg px-2.5 py-1.5 border border-[var(--glass-border)]">
+                      <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                      <select
+                        value={selectedSessionDate}
+                        onChange={(e) => handleDateChange(e.target.value)}
+                        className="bg-transparent text-xs font-medium text-foreground border-none outline-none cursor-pointer"
+                      >
+                        {dateOptions.length === 0 && <option value="">No dates</option>}
+                        {dateOptions.map((d) => (
+                          <option key={d.key} value={d.key}>{d.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Time/session selector */}
+                    <div className="flex items-center gap-1.5 bg-accent/30 rounded-lg px-2.5 py-1.5 border border-[var(--glass-border)]">
+                      <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                      <select
+                        value={selectedConvId ?? ''}
+                        onChange={(e) => setSelectedConvId(e.target.value)}
+                        disabled={sessionsForDate.length === 0}
+                        className="bg-transparent text-xs font-medium text-foreground border-none outline-none cursor-pointer disabled:opacity-50"
+                      >
+                        {sessionsForDate.length === 0 ? (
+                          <option value="">No sessions</option>
+                        ) : (
+                          sessionsForDate.map((s, i) => (
+                            <option key={s.id} value={s.id}>
+                              {formatTimeLabel(s.created_at)}{i === 0 ? ' (latest)' : ''}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </div>
+
+                    {/* Ticket button */}
                     <button
                       onClick={() => setShowTicketModal(true)}
-                      className="md:hidden w-8 h-8 rounded-xl flex items-center justify-center text-muted-foreground hover:bg-accent/30"
+                      disabled={!selectedConvId}
+                      className="w-8 h-8 rounded-xl flex items-center justify-center text-muted-foreground hover:bg-accent/30 disabled:opacity-30"
                       title="Raise Ticket"
                     >
                       <Ticket className="w-4 h-4" />
@@ -494,10 +626,7 @@ export default function InboxPage() {
                         <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-3">
                           <MessageSquare className="w-6 h-6 text-primary" />
                         </div>
-                        <p className="text-sm text-muted-foreground">No messages in this conversation</p>
-                        <p className="text-xs text-muted-foreground/60 mt-1">
-                          Messages will appear here when customers chat
-                        </p>
+                        <p className="text-sm text-muted-foreground">No messages in this session</p>
                       </div>
                     ) : (
                       <>
@@ -516,7 +645,6 @@ export default function InboxPage() {
 
                         {messages.map((msg) => {
                           const isUser = msg.role === 'user';
-                          const isAssistant = msg.role === 'assistant';
                           const isTool = msg.role === 'tool';
                           const text = parseMessageContent(msg.content);
 
@@ -527,7 +655,7 @@ export default function InboxPage() {
                               key={msg.id}
                               className={cn('flex gap-3', isUser ? 'justify-end' : 'justify-start')}
                             >
-                              {isAssistant && (
+                              {!isUser && (
                                 <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 mt-1">
                                   <Bot className="w-4 h-4 text-primary" />
                                 </div>
@@ -540,7 +668,7 @@ export default function InboxPage() {
                                     : 'bg-accent/40 border border-[var(--glass-border)] text-foreground rounded-bl-md',
                                 )}
                               >
-                                <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
+                                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{text}</p>
                                 <p
                                   className={cn(
                                     'text-[10px] mt-1.5',
@@ -567,35 +695,37 @@ export default function InboxPage() {
                   </div>
                 </div>
 
-                {/* Stats bar at bottom */}
-                <div className="px-4 md:px-6 py-3 border-t border-[var(--glass-border)] bg-accent/10">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground max-w-2xl mx-auto">
-                    <div className="flex items-center gap-4">
+                {/* Footer stats */}
+                {selectedConv && (
+                  <div className="px-4 md:px-6 py-3 border-t border-[var(--glass-border)] bg-accent/10 flex-shrink-0">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground max-w-2xl mx-auto">
+                      <div className="flex items-center gap-4">
+                        <span className="flex items-center gap-1.5">
+                          <MessageSquare className="w-3 h-3" />
+                          {messages.filter((m) => m.role !== 'tool').length} messages
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <Hash className="w-3 h-3" />
+                          {selectedConv.session_id.slice(0, 8)}
+                        </span>
+                      </div>
                       <span className="flex items-center gap-1.5">
-                        <MessageSquare className="w-3 h-3" />
-                        {messages.length} messages
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <Hash className="w-3 h-3" />
-                        {selectedConv.total_turns} turns
+                        <Clock className="w-3 h-3" />
+                        {formatDateLabel(selectedConv.created_at)} {formatTimeLabel(selectedConv.created_at)}
                       </span>
                     </div>
-                    <span className="flex items-center gap-1.5">
-                      <Clock className="w-3 h-3" />
-                      Started {timeAgo(selectedConv.created_at)}
-                    </span>
                   </div>
-                </div>
+                )}
               </>
             ) : (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
                   <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                    <MessageSquare className="w-8 h-8 text-primary" />
+                    <Users className="w-8 h-8 text-primary" />
                   </div>
-                  <p className="text-sm font-medium text-foreground">Select a conversation</p>
+                  <p className="text-sm font-medium text-foreground">Select a customer</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Pick a chat from the list to view the full history
+                    Choose a customer from the list to view their chat sessions
                   </p>
                 </div>
               </div>
@@ -605,9 +735,10 @@ export default function InboxPage() {
       </div>
 
       {/* Ticket Modal */}
-      {showTicketModal && selected && (
+      {showTicketModal && selectedConvId && (
         <TicketModal
-          conversationId={selected}
+          conversationId={selectedConvId}
+          sessionLabel={selectedGroup?.isGuest ? 'Guest Chat' : selectedGroup?.customer ?? ''}
           onClose={() => setShowTicketModal(false)}
         />
       )}

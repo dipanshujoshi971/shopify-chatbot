@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { getMerchant } from '@/lib/merchant';
 import { isSuperAdmin } from '@/lib/admin';
 import { currentUser } from '@clerk/nextjs/server';
@@ -12,6 +13,11 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const [merchant, user, isAdmin] = await Promise.all([getMerchant(), currentUser(), isSuperAdmin()]);
+
+  // Super admin auto-redirect: send them straight to the admin panel
+  if (isAdmin) {
+    redirect('/admin');
+  }
 
   if (!merchant) {
     return <ConnectStoreForm />;

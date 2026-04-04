@@ -440,6 +440,85 @@ function parseProductsFromMarkdown(text: string, shopDomain: string): ParsedProd
   return products;
 }
 
+// ─── Cart data extraction from MCP JSON text ─────────────────────────────────
+
+interface ParsedCartLine {
+  title: string;
+  quantity: number;
+  variant?: string;
+  image?: string;
+  price?: { amount: string; currencyCode: string };
+}
+
+interface ParsedCartResult {
+  cartId: string;
+  checkoutUrl: string;
+  totalQuantity: number;
+  lines: ParsedCartLine[];
+  cost?: {
+    totalAmount: { amount: string; currencyCode: string };
+  };
+}
+
+/**
+ * Extract structured cart data from MCP text content blocks.
+ * Shopify MCP returns cart data as JSON inside text blocks.
+ */
+function extractCartResult(content: MCPContent[]): ParsedCartResult | null {
+  for (const block of content) {
+    if (block.type !== 'text') continue;
+    const text = (block as MCPTextContent).text;
+
+    try {
+      const parsed = JSON.parse(text);
+      const cart = parsed?.cart ?? parsed;
+
+      // Must have a cart ID to be a valid cart response
+      const cartId = cart?.id ?? cart?.cartId;
+      if (!cartId) continue;
+
+      const checkoutUrl = cart.checkout_url ?? cart.checkoutUrl ?? '';
+      const totalQuantity = cart.total_quantity ?? cart.totalQuantity ?? 0;
+
+      // Parse line items
+      const lines: ParsedCartLine[] = [];
+      const rawLines = cart.lines?.edges ?? cart.lines?.nodes ?? cart.lines ?? [];
+      const lineItems = Array.isArray(rawLines) ? rawLines : [];
+
+      for (const rawLine of lineItems) {
+        const line = rawLine?.node ?? rawLine;
+        if (!line) continue;
+
+        const merchandise = line.merchandise ?? {};
+        const title = merchandise.product?.title ?? merchandise.title ?? line.title ?? 'Unknown';
+        const variant = merchandise.title ?? line.variant ?? undefined;
+        const image = merchandise.image?.url ?? merchandise.product?.featuredImage?.url ?? line.image ?? undefined;
+        const quantity = line.quantity ?? 1;
+
+        let price: { amount: string; currencyCode: string } | undefined;
+        const costPerItem = line.cost?.totalAmount ?? line.cost?.amountPerQuantity ?? line.price;
+        if (costPerItem?.amount) {
+          price = { amount: String(costPerItem.amount), currencyCode: costPerItem.currencyCode ?? 'USD' };
+        }
+
+        lines.push({ title, quantity, ...(variant ? { variant } : {}), ...(image ? { image } : {}), ...(price ? { price } : {}) });
+      }
+
+      // Parse cost
+      let cost: ParsedCartResult['cost'] | undefined;
+      const totalAmount = cart.cost?.total_amount ?? cart.cost?.totalAmount;
+      if (totalAmount?.amount) {
+        cost = { totalAmount: { amount: String(totalAmount.amount), currencyCode: totalAmount.currency ?? totalAmount.currencyCode ?? 'USD' } };
+      }
+
+      return { cartId, checkoutUrl, totalQuantity, lines, ...(cost ? { cost } : {}) };
+    } catch {
+      // Not JSON, try next block
+    }
+  }
+  return null;
+}
+
 // ─── Tool factory ─────────────────────────────────────────────────────────────
 
 /**
@@ -535,6 +614,10 @@ export function createStorefrontMCPTools(shopDomain: string) {
       execute: async ({ cart_id }) => {
         try {
           const rawContent = await callShopifyMCPRaw(shopDomain, 'get_cart', { cart_id });
+          const cartResult = extractCartResult(rawContent);
+          if (cartResult) {
+            return { __shopbot_cart: cartResult, text: mcpContentToText(rawContent) };
+          }
           return mcpContentToText(rawContent);
         } catch {
           return 'Could not retrieve the cart right now. Please try again.';
@@ -578,6 +661,10 @@ export function createStorefrontMCPTools(shopDomain: string) {
           const args: Record<string, unknown> = { add_items };
           if (cart_id) args.cart_id = cart_id;
           const rawContent = await callShopifyMCPRaw(shopDomain, 'update_cart', args);
+          const cartResult = extractCartResult(rawContent);
+          if (cartResult) {
+            return { __shopbot_cart: cartResult, text: mcpContentToText(rawContent) };
+          }
           return mcpContentToText(rawContent);
         } catch {
           return 'Could not update the cart right now. Please try again.';

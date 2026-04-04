@@ -31,6 +31,28 @@ import { TicketForm }      from './TicketForm.js';
 let msgCounter = 0;
 function uid(): string { return `msg-${++msgCounter}-${Date.now()}`; }
 
+// ── Session persistence helpers (survives page navigations, clears on tab close) ──
+
+const STORAGE_KEY_MESSAGES       = 'shopbot_messages';
+const STORAGE_KEY_CONVERSATION   = 'shopbot_conversation_id';
+const STORAGE_KEY_WIDGET_OPEN    = 'shopbot_widget_open';
+
+function saveToSession(key: string, value: unknown): void {
+  try { sessionStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+
+function loadFromSession<T>(key: string, fallback: T): T {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (raw === null) return fallback;
+    return JSON.parse(raw) as T;
+  } catch { return fallback; }
+}
+
+function removeFromSession(key: string): void {
+  try { sessionStorage.removeItem(key); } catch {}
+}
+
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString(navigator.language, {
     hour: '2-digit', minute: '2-digit',
@@ -177,6 +199,13 @@ function MessageBubble({ msg, onSendMessage }: { msg: ChatMessage; onSendMessage
   const hasContent = !!msg.content;
   const showCursor = msg.streaming && hasContent;
 
+  // Hide text bubble when rich annotations (product carousel, cart card) are present
+  // — the carousel/card IS the response, text would be redundant
+  const hasRichAnnotations = !isUser && msg.annotations?.some(
+    (a) => a.toolName === 'search_shop_catalog' || a.toolName === 'get_cart' || a.toolName === 'update_cart',
+  );
+  const showTextBubble = hasContent && !hasRichAnnotations;
+
   return (
     <div class={`sb-msg sb-msg-${msg.role}`}>
       {!isUser && (
@@ -185,7 +214,7 @@ function MessageBubble({ msg, onSendMessage }: { msg: ChatMessage; onSendMessage
         </div>
       )}
       <div class="sb-msg-content">
-        {hasContent && (
+        {showTextBubble && (
           <div class={`sb-bubble sb-bubble-${msg.role}${showCursor ? ' sb-cursor' : ''}`}>
             <MessageText text={msg.content} isUser={isUser} />
           </div>
@@ -274,12 +303,18 @@ interface WidgetProps {
 export function Widget({ config }: WidgetProps) {
   const { apiKey, shopDomain, apiBaseUrl, title = 'Our Store' } = config;
 
-  const [open,           setOpen]          = useState(false);
-  const [messages,       setMessages]      = useState<ChatMessage[]>([]);
+  const [open,           setOpen]          = useState(() => loadFromSession(STORAGE_KEY_WIDGET_OPEN, false));
+  const [messages,       setMessages]      = useState<ChatMessage[]>(() => {
+    // Restore messages from sessionStorage (strip streaming flag)
+    const saved = loadFromSession<ChatMessage[]>(STORAGE_KEY_MESSAGES, []);
+    return saved.map((m) => ({ ...m, streaming: false }));
+  });
   const [input,          setInput]         = useState('');
   const [streaming,      setStreaming]     = useState(false);
   const [consent,        setConsent]       = useState<ConsentStatus>(() => getConsentStatus());
-  const [conversationId, setConversationId] = useState(() => newConversationId());
+  const [conversationId, setConversationId] = useState(() =>
+    loadFromSession<string>(STORAGE_KEY_CONVERSATION, '') || newConversationId(),
+  );
   const [sessionId,      setSessionId]      = useState(() => getOrCreateSessionId());
   const [unread,         setUnread]        = useState(0);
   const [showTicket,     setShowTicket]    = useState(false);
@@ -307,6 +342,17 @@ export function Widget({ config }: WidgetProps) {
 
   // Expose shop domain for ProductCarousel links
   useEffect(() => { (window as any).__shopbot_domain__ = shopDomain; }, [shopDomain]);
+
+  // ── Persist chat state to sessionStorage (survives page navigation) ──
+  useEffect(() => {
+    // Only persist non-streaming messages (strip streaming state)
+    if (!streaming) {
+      saveToSession(STORAGE_KEY_MESSAGES, messages);
+    }
+  }, [messages, streaming]);
+
+  useEffect(() => { saveToSession(STORAGE_KEY_CONVERSATION, conversationId); }, [conversationId]);
+  useEffect(() => { saveToSession(STORAGE_KEY_WIDGET_OPEN, open); }, [open]);
 
   // Load remote config
   useEffect(() => {
@@ -456,6 +502,11 @@ export function Widget({ config }: WidgetProps) {
       );
     } finally {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      // Always mark the assistant message as done streaming — handles edge cases
+      // where the `finish` event never arrives (stream ends after tool calls)
+      setMessages((prev) =>
+        prev.map((m) => m.id === assistantId && m.streaming ? { ...m, streaming: false } : m),
+      );
       setStreaming(false);
     }
   }, [input, streaming, apiBaseUrl, apiKey, shopDomain, sessionId, conversationId, messages.length, pageCtx]);
@@ -493,7 +544,9 @@ export function Widget({ config }: WidgetProps) {
     }
     setMessages([]);
     setConversationId(newConversationId());
-    // Clear stored session so a fresh one is generated
+    // Clear all persisted chat state
+    removeFromSession(STORAGE_KEY_MESSAGES);
+    removeFromSession(STORAGE_KEY_CONVERSATION);
     try { sessionStorage.removeItem('shopbot_session_id'); } catch {}
     setSessionId(getOrCreateSessionId());
   }, [streaming]);
@@ -590,11 +643,17 @@ export function Widget({ config }: WidgetProps) {
                 ) : (
                   messages.map((msg) => <MessageBubble key={msg.id} msg={msg} onSendMessage={sendMessage} />)
                 )}
-                {streaming && (
-                  <div class="sb-typing" aria-label="Assistant is typing">
-                    <span /><span /><span />
-                  </div>
-                )}
+                {streaming && (() => {
+                  // Hide typing indicator once annotations (carousel/cards) have arrived
+                  const lastMsg = messages[messages.length - 1];
+                  const hasAnnotations = lastMsg?.role === 'assistant' && lastMsg.annotations && lastMsg.annotations.length > 0;
+                  if (hasAnnotations) return null;
+                  return (
+                    <div class="sb-typing" aria-label="Assistant is typing">
+                      <span /><span /><span />
+                    </div>
+                  );
+                })()}
                 <div ref={messagesEndRef} />
               </div>
 
@@ -605,7 +664,7 @@ export function Widget({ config }: WidgetProps) {
                   placeholder={`Message ${botName}...`}
                   value={input}
                   rows={1}
-                  disabled={streaming}
+                  disabled={false}
                   onInput={(e) => { setInput((e.target as HTMLTextAreaElement).value); resizeTextarea(); }}
                   onKeyDown={handleKeyDown}
                   aria-label="Chat message input"
@@ -613,7 +672,7 @@ export function Widget({ config }: WidgetProps) {
                 <button
                   class="sb-send-btn"
                   onClick={() => sendMessage()}
-                  disabled={!input.trim() || streaming}
+                  disabled={!input.trim()}
                   aria-label="Send message"
                 >
                   <SendIcon />

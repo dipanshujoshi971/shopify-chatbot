@@ -27,7 +27,10 @@
       "Bash(cat '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/merchants/\\\\[id\\\\]/page.tsx')",
       "Bash(ls -la '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/merchants/')",
       "Bash(cat '/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/merchants/[id]/page.tsx')",
-      "Bash(ls \"C:\\\\Users\\\\deepj\\\\OneDrive\\\\Documents\\\\chatbot\\\\shopify-chatbot\\\\packages\\\\db\\\\src\\\\migrations\"\" 2>/dev/null || echo \"no migrations dir \")"
+      "Bash(ls \"C:\\\\Users\\\\deepj\\\\OneDrive\\\\Documents\\\\chatbot\\\\shopify-chatbot\\\\packages\\\\db\\\\src\\\\migrations\"\" 2>/dev/null || echo \"no migrations dir \")",
+      "Bash(xargs grep:*)",
+      "Bash(ls -la \"/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/\")",
+      "Bash(grep -E \"middleware|\\\\.ts$|\\\\.js$\")"
     ]
   }
 }

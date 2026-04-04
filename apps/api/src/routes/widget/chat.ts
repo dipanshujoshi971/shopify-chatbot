@@ -27,15 +27,15 @@ import { getLLMModel, getLLMInfo }  from '../../lib/llm.js';
 
 // ── Plan token budgets (tokens per conversation) ──────────────────────────────
 const PLAN_BUDGET: Record<string, number> = {
-  starter:    10_000,
-  growth:     50_000,
+  starter:    200_000,
+  growth:     500_000,
   pro:        -1,
   enterprise: -1,
 };
 
 const HARD_LIMITS = {
-  maxTurns:        30,
-  maxTotalTokens:  15_000,
+  maxTurns:        50,
+  maxTotalTokens:  200_000,
   maxCharsPerTurn: 8_000,
   maxSteps:        8,
 } as const;
@@ -323,15 +323,42 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
                 );
               }
             }
-            // get_order_status, get_cart, update_cart: forward directly
-            if (tr.toolName === 'get_order_status' || tr.toolName === 'get_cart' || tr.toolName === 'update_cart') {
-              const safePayload = JSON.parse(JSON.stringify({
-                type      : 'tool_result',
-                toolName  : tr.toolName,
-                toolCallId: tr.toolCallId,
-                result    : tr.result,
-              }));
-              streamData.append(safePayload);
+            // get_order_status: forward directly (already structured)
+            if (tr.toolName === 'get_order_status') {
+              const result = tr.result as any;
+              // Only forward if the order was found
+              if (result?.found !== false && result?.orderNumber) {
+                const safePayload = JSON.parse(JSON.stringify({
+                  type      : 'tool_result',
+                  toolName  : tr.toolName,
+                  toolCallId: tr.toolCallId,
+                  result    : result,
+                }));
+                streamData.append(safePayload);
+              }
+            }
+            // get_cart, update_cart: extract parsed cart data
+            if (tr.toolName === 'get_cart' || tr.toolName === 'update_cart') {
+              const result = tr.result as any;
+              const cartData = result?.__shopbot_cart;
+              if (cartData) {
+                request.log.info(
+                  { cartId: cartData.cartId, totalQuantity: cartData.totalQuantity },
+                  'chat: forwarding cart card annotation',
+                );
+                const safePayload = JSON.parse(JSON.stringify({
+                  type      : 'tool_result',
+                  toolName  : tr.toolName,
+                  toolCallId: tr.toolCallId,
+                  result    : cartData,
+                }));
+                streamData.append(safePayload);
+              } else {
+                request.log.warn(
+                  { resultType: typeof result },
+                  'chat: cart tool returned no __shopbot_cart',
+                );
+              }
             }
           }
         },

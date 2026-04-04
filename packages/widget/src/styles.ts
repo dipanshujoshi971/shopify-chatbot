@@ -320,6 +320,12 @@ export const WIDGET_CSS = /* css */ `
     flex-direction: row-reverse;
   }
   .sb-msg-assistant { align-self: flex-start; }
+  /* Rich content messages (carousels, cards) need full width */
+  .sb-msg-assistant:has(.sb-carousel-wrap),
+  .sb-msg-assistant:has(.sb-cart-card),
+  .sb-msg-assistant:has(.sb-order-card) {
+    max-width: 100%;
+  }
 
   .sb-msg-avatar {
     width: 28px;
@@ -340,7 +346,8 @@ export const WIDGET_CSS = /* css */ `
     flex-direction: column;
     gap: 2px;
     min-width: 0;
-    overflow: hidden;
+    overflow: visible;
+    max-width: 100%;
   }
   .sb-msg-user .sb-msg-content { align-items: flex-end; }
   .sb-msg-assistant .sb-msg-content { align-items: flex-start; }
