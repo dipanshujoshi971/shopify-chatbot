@@ -44,12 +44,21 @@ export async function GET(
     openTickets: 0,
     recentConversations: [] as any[],
     dailyUsage: [] as any[],
+    embedding: {
+      totalTokens: 0,
+      totalChunks: 0,
+      totalSources: 0,
+      tokensThisMonth: 0,
+      chunksThisMonth: 0,
+      sourcesThisMonth: 0,
+    },
   };
 
   try {
     const [
       tokens, convs, msgs, active, tokensToday, tokensWeek, tokensMonth,
       convsToday, convsWeek, tickets, recentConvs, dailyUsage,
+      embedAll, embedMonth,
     ] = await Promise.all([
       pgPool.unsafe(`SELECT COALESCE(SUM(total_tokens_used),0)::int AS c, COALESCE(SUM(prompt_tokens),0)::int AS input, COALESCE(SUM(completion_tokens),0)::int AS output FROM "tenant_${sn}"."conversations"`),
       pgPool.unsafe(`SELECT COUNT(*)::int AS c FROM "tenant_${sn}"."conversations"`),
@@ -73,6 +82,14 @@ export async function GET(
         GROUP BY DATE_TRUNC('day', created_at)
         ORDER BY day ASC
       `),
+      pgPool.unsafe(
+        `SELECT COALESCE(SUM(tokens_used),0)::int AS tokens, COALESCE(SUM(chunks_generated),0)::int AS chunks, COUNT(*)::int AS sources FROM "embedding_usage" WHERE merchant_id = $1`,
+        [id],
+      ),
+      pgPool.unsafe(
+        `SELECT COALESCE(SUM(tokens_used),0)::int AS tokens, COALESCE(SUM(chunks_generated),0)::int AS chunks, COUNT(*)::int AS sources FROM "embedding_usage" WHERE merchant_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`,
+        [id],
+      ),
     ]);
 
     stats = {
@@ -96,6 +113,14 @@ export async function GET(
       openTickets: (tickets[0] as any)?.c ?? 0,
       recentConversations: recentConvs as any[],
       dailyUsage: dailyUsage as any[],
+      embedding: {
+        totalTokens: (embedAll[0] as any)?.tokens ?? 0,
+        totalChunks: (embedAll[0] as any)?.chunks ?? 0,
+        totalSources: (embedAll[0] as any)?.sources ?? 0,
+        tokensThisMonth: (embedMonth[0] as any)?.tokens ?? 0,
+        chunksThisMonth: (embedMonth[0] as any)?.chunks ?? 0,
+        sourcesThisMonth: (embedMonth[0] as any)?.sources ?? 0,
+      },
     };
   } catch {
     // Tenant schema might not exist

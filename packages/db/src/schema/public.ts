@@ -52,6 +52,20 @@ export const tokenUsageDaily = pgTable('token_usage_daily', {
   index('token_usage_daily_date_idx').on(table.date),
 ]);
 
+// Embedding usage — per-job record of embedding token consumption (RAG pipeline)
+export const embeddingUsage = pgTable('embedding_usage', {
+  id: text('id').primaryKey(),
+  merchantId: text('merchant_id').notNull(),
+  knowledgeSourceId: text('knowledge_source_id').notNull(),
+  tokensUsed: integer('tokens_used').notNull().default(0),
+  chunksGenerated: integer('chunks_generated').notNull().default(0),
+  model: text('model').notNull().default('text-embedding-3-small'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('embedding_usage_merchant_idx').on(table.merchantId),
+  index('embedding_usage_created_at_idx').on(table.createdAt),
+]);
+
 // Webhook events — platform-level idempotency for Stripe + app/uninstalled
 // Per-tenant Shopify webhook dedup lives in each tenant schema
 export const webhookEvents = pgTable('webhook_events', {

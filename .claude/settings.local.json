@@ -31,7 +31,13 @@
       "Bash(xargs grep:*)",
       "Bash(ls -la \"/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/\")",
       "Bash(grep -E \"middleware|\\\\.ts$|\\\\.js$\")",
-      "Bash(npx turbo:*)"
+      "Bash(npx turbo:*)",
+      "Bash(find /c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot -maxdepth 3 -not -path */node_modules/* -not -path */.next/* -not -path */dist/* -type d)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(find /c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot -name *.env* -o -name .env.example)",
+      "Bash(ls \"C:/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(dashboard\\)/settings/\")",
+      "Bash(find /c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/api -type f \\\\\\(-name *.ts -o -name *.js \\\\\\))"
     ]
   }
 }

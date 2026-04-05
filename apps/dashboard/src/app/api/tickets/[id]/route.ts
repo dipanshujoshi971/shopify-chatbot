@@ -70,7 +70,7 @@ export async function PUT(
   try {
     // Update status / assignee / priority if provided
     const updates: string[] = ['updated_at = now()'];
-    const vals: unknown[] = [];
+    const vals: (string | number)[] = [];
     let idx = 1;
 
     if (body.status) {

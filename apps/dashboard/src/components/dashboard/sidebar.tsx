@@ -129,11 +129,16 @@ interface SidebarProps {
   planId?: string;
   userName?: string;
   userImageUrl?: string;
+  userRole?: string;
   isAdmin?: boolean;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
 }
 
-export function Sidebar({ shopDomain, planId, userName, userImageUrl, isAdmin }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState(false);
+export function Sidebar({ shopDomain, planId, userName, userImageUrl, isAdmin, collapsed: controlledCollapsed, onCollapsedChange }: SidebarProps) {
+  const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const collapsed = controlledCollapsed ?? internalCollapsed;
+  const setCollapsed = onCollapsedChange ?? setInternalCollapsed;
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
 
   useEffect(() => {

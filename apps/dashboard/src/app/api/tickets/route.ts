@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
     await ensureTicketColumns(sn);
 
     const conditions: string[] = [];
-    const params: unknown[] = [];
+    const params: (string | number)[] = [];
     let paramIdx = 1;
 
     if (status) {

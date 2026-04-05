@@ -1,4 +1,19 @@
-import { pgSchema, text, timestamp, integer, boolean, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgSchema, text, timestamp, integer, boolean, index, uniqueIndex, uuid, customType } from 'drizzle-orm/pg-core';
+
+const vector = customType<{ data: number[]; driverParam: string }>({
+  dataType() {
+    return 'vector(1536)';
+  },
+  toDriver(value: number[]): string {
+    return `[${value.join(',')}]`;
+  },
+  fromDriver(value: unknown): number[] {
+    return (value as string)
+      .slice(1, -1)
+      .split(',')
+      .map(Number);
+  },
+});
 
 export function createTenantSchema(storeId: string) {
   const schema = pgSchema(`tenant_${storeId}`);
@@ -77,7 +92,30 @@ export function createTenantSchema(storeId: string) {
     uniqueIndex('webhook_events_idempotency_key_idx').on(table.idempotencyKey),
   ]);
 
-  return { products, conversations, messages, agentConfig, supportTickets, webhookEvents };
+  const knowledgeSources = schema.table('knowledge_sources', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    title: text('title').notNull(),
+    fileName: text('file_name').notNull(),
+    r2Key: text('r2_key').notNull(),
+    status: text('status', { enum: ['processing', 'ready', 'failed'] }).notNull().default('processing'),
+    chunkCount: integer('chunk_count').notNull().default(0),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  });
+
+  const knowledgeChunks = schema.table('knowledge_chunks', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    knowledgeSourceId: uuid('knowledge_source_id')
+      .notNull()
+      .references(() => knowledgeSources.id, { onDelete: 'cascade' }),
+    content: text('content').notNull(),
+    embedding: vector('embedding').notNull(),
+    chunkIndex: integer('chunk_index').notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  }, (table) => [
+    index('knowledge_chunks_source_idx').on(table.knowledgeSourceId),
+  ]);
+
+  return { products, conversations, messages, agentConfig, supportTickets, webhookEvents, knowledgeSources, knowledgeChunks };
 }
 
 export type TenantTables = ReturnType<typeof createTenantSchema>;

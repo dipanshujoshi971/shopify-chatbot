@@ -19,7 +19,9 @@ import { tool }       from 'ai';
 import { z }          from 'zod';
 import type postgres  from 'postgres';
 import { nanoid }     from 'nanoid';
+import OpenAI         from 'openai';
 import { decryptToken } from './shopify.js';
+import { env }        from '../env.js';
 
 // ─── Context ─────────────────────────────────────────────────────────────────
 
@@ -159,6 +161,19 @@ const ORDER_DETAILS_QUERY = `
     }
   }
 `;
+
+// ─── OpenAI singleton (for query embeddings) ─────────────────────────────────
+
+const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const EMBED_MODEL = 'text-embedding-3-small';
+
+// ─── Knowledge search types ──────────────────────────────────────────────────
+
+interface KnowledgeChunk {
+  content: string;
+  similarity: number;
+  knowledge_source_id: string;
+}
 
 // ─── Tool factory ─────────────────────────────────────────────────────────────
 
@@ -329,6 +344,85 @@ export function createAdminTools(ctx: AdminToolContext) {
           return {
             success: false,
             message: 'Could not create a support ticket. Please contact us directly.',
+          };
+        }
+      },
+    }),
+
+    // ── search_knowledge ─────────────────────────────────────────────────
+    // Vector similarity search over merchant-uploaded documents (RAG).
+    search_knowledge: tool({
+      description:
+        'Search the merchant\'s uploaded knowledge base (policies, FAQs, guides, ' +
+        'manuals) for information relevant to the customer\'s question. ' +
+        'Use when the question is about store policies, shipping details, ' +
+        'return procedures, warranty info, sizing guides, or any topic ' +
+        'likely covered by merchant-uploaded documents. ' +
+        'Do NOT use for product search (use search_shop_catalog) or ' +
+        'order status (use get_order_status).',
+      parameters: z.object({
+        query: z.string().describe('The customer question to search for in the knowledge base'),
+      }),
+      execute: async ({ query }) => {
+        try {
+          // 1 — Check if knowledge_sources exist (avoid embedding call if empty)
+          const sourceCheck = await ctx.sql.unsafe(
+            `SELECT 1 FROM "tenant_${safeName}"."knowledge_sources"
+              WHERE status = 'ready' LIMIT 1`,
+          );
+
+          if (sourceCheck.length === 0) {
+            return {
+              found: false,
+              message: 'No knowledge base documents have been uploaded for this store yet.',
+              context: '',
+            };
+          }
+
+          // 2 — Generate embedding for the query
+          const embeddingRes = await openai.embeddings.create({
+            model: EMBED_MODEL,
+            input: query,
+          });
+          const queryEmbedding = embeddingRes.data[0].embedding;
+          const embeddingStr = `[${queryEmbedding.join(',')}]`;
+
+          // 3 — Cosine similarity search (pgvector <=> operator)
+          const chunks: KnowledgeChunk[] = await ctx.sql.unsafe(
+            `SELECT content, knowledge_source_id,
+                    1 - (embedding <=> $1::vector) AS similarity
+               FROM "tenant_${safeName}"."knowledge_chunks"
+              ORDER BY embedding <=> $1::vector
+              LIMIT 5`,
+            [embeddingStr],
+          ) as any[];
+
+          if (chunks.length === 0) {
+            return {
+              found: false,
+              message: 'No relevant information found in the knowledge base.',
+              context: '',
+            };
+          }
+
+          // 4 — Format results as a context block for the LLM
+          const contextBlock = chunks
+            .map((chunk, i) => {
+              const pct = (chunk.similarity * 100).toFixed(1);
+              return `[Source ${i + 1} — ${pct}% match]\n${chunk.content}`;
+            })
+            .join('\n\n---\n\n');
+
+          return {
+            found: true,
+            message: `Found ${chunks.length} relevant knowledge base excerpts.`,
+            context: contextBlock,
+          };
+        } catch (err) {
+          return {
+            found: false,
+            message: `Knowledge base search failed. ${(err as Error)?.message ?? ''}`,
+            context: '',
           };
         }
       },

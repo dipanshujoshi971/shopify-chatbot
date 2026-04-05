@@ -19,6 +19,14 @@ const PRICING: Record<string, { input: number; output: number }> = {
   'claude-sonnet-4-5-20251001': { input: 3.00,  output: 15.00 },
 };
 
+// Embedding pricing per 1M tokens (USD) — input only, no output
+const EMBEDDING_PRICING: Record<string, number> = {
+  'text-embedding-3-small': 0.02,
+  'text-embedding-3-large': 0.13,
+};
+
+const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
+
 // Default model for cost estimation (matches LLM_PROVIDER default: 'fast' tier)
 const DEFAULT_MODEL = 'gpt-4o-mini';
 
@@ -45,8 +53,26 @@ export function formatCost(cost: number): string {
 }
 
 /**
+ * Estimate embedding cost in USD for a given token count
+ */
+export function estimateEmbeddingCost(
+  tokens: number,
+  model: string = DEFAULT_EMBEDDING_MODEL,
+): number {
+  const pricePerMillion = EMBEDDING_PRICING[model] ?? EMBEDDING_PRICING[DEFAULT_EMBEDDING_MODEL];
+  return (tokens / 1_000_000) * pricePerMillion;
+}
+
+/**
  * Get all available model pricing for display
  */
 export function getModelPricing() {
   return PRICING;
+}
+
+/**
+ * Get embedding model pricing for display
+ */
+export function getEmbeddingPricing() {
+  return EMBEDDING_PRICING;
 }

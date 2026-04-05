@@ -147,6 +147,40 @@ export async function provisionTenantSchema(
       ON "${s}"."webhook_events" ("idempotency_key")
     `);
 
+    // 8 — Knowledge sources (uploaded documents for RAG)
+    await sql.unsafe(`
+      CREATE TABLE IF NOT EXISTS "${s}"."knowledge_sources" (
+        "id"           uuid PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+        "title"        text NOT NULL,
+        "file_name"    text NOT NULL,
+        "r2_key"       text NOT NULL,
+        "status"       text NOT NULL DEFAULT 'processing',
+        "chunk_count"  integer NOT NULL DEFAULT 0,
+        "created_at"   timestamp NOT NULL DEFAULT now()
+      )
+    `);
+
+    // 9 — Knowledge chunks (embeddings for vector search)
+    await sql.unsafe(`
+      CREATE TABLE IF NOT EXISTS "${s}"."knowledge_chunks" (
+        "id"                    uuid PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+        "knowledge_source_id"   uuid NOT NULL REFERENCES "${s}"."knowledge_sources"("id") ON DELETE CASCADE,
+        "content"               text NOT NULL,
+        "embedding"             vector(1536) NOT NULL,
+        "chunk_index"           integer NOT NULL,
+        "created_at"            timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await sql.unsafe(`
+      CREATE INDEX IF NOT EXISTS "knowledge_chunks_source_idx"
+      ON "${s}"."knowledge_chunks" ("knowledge_source_id")
+    `);
+    await sql.unsafe(`
+      CREATE INDEX IF NOT EXISTS "knowledge_chunks_embedding_idx"
+      ON "${s}"."knowledge_chunks"
+      USING ivfflat ("embedding" vector_cosine_ops) WITH (lists = 100)
+    `);
+
   } finally {
     await sql.end();
   }

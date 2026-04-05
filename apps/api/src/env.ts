@@ -48,21 +48,19 @@ const envSchema = z
       .enum(['anthropic', 'openai'])
       .default('anthropic'),
 
-    //   Only required when LLM_PROVIDER=openai.
-    //   Validated in superRefine below.
     //   @ai-sdk/anthropic reads ANTHROPIC_API_KEY from process.env automatically,
     //   so it doesn't need to be listed here unless you want Zod to validate it.
-    OPENAI_API_KEY: z.string().optional(),
+    //   Always required: used for text-embedding-3-small in the knowledge embed worker,
+    //   even when LLM_PROVIDER=anthropic.
+    OPENAI_API_KEY: z.string(),
+
+    // Cloudflare R2 (S3-compatible object storage)
+    R2_ACCOUNT_ID: z.string(),
+    R2_ACCESS_KEY_ID: z.string(),
+    R2_SECRET_ACCESS_KEY: z.string(),
+    R2_BUCKET_NAME: z.string(),
   })
-  .superRefine((data, ctx) => {
-    if (data.LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
-      ctx.addIssue({
-        code   : z.ZodIssueCode.custom,
-        path   : ['OPENAI_API_KEY'],
-        message: 'OPENAI_API_KEY must be set when LLM_PROVIDER=openai',
-      });
-    }
-  });
+;
 
 function validateEnv() {
   const result = envSchema.safeParse(process.env);

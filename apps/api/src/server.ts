@@ -11,6 +11,8 @@ import widgetAuthPlugin from './plugins/widgetAuth.js';
 import chatRoutes from './routes/widget/chat.js';
 import widgetConfigRoutes from './routes/widget/config.js';
 import { registerWidgetServing } from './routes/widget/serve.js';
+import dashboardAuthPlugin from './plugins/dashboardAuth.js';
+import knowledgeRoutes from './routes/dashboard/knowledge.js';
 
 const app = Fastify({
   loggerInstance: logger,
@@ -85,6 +87,15 @@ await app.register(
     await widgetScope.register(widgetConfigRoutes);
   },
   { prefix: '/widget' },
+);
+
+// Dashboard routes (Clerk auth required)
+await app.register(
+  async (dashboardScope) => {
+    await dashboardScope.register(dashboardAuthPlugin);
+    await dashboardScope.register(knowledgeRoutes);
+  },
+  { prefix: '/dashboard' },
 );
 
 // ─── Widget bundle serving (public, no auth) ─────────────────────────────

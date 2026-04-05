@@ -22,9 +22,10 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   DollarSign,
+  FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { estimateCost, formatCost } from '@/lib/token-cost';
+import { estimateCost, estimateEmbeddingCost, formatCost } from '@/lib/token-cost';
 
 interface MerchantDetail {
   id: string;
@@ -63,6 +64,14 @@ interface MerchantStats {
   openTickets: number;
   recentConversations: any[];
   dailyUsage: any[];
+  embedding: {
+    totalTokens: number;
+    totalChunks: number;
+    totalSources: number;
+    tokensThisMonth: number;
+    chunksThisMonth: number;
+    sourcesThisMonth: number;
+  };
 }
 
 function timeAgo(dateStr: string): string {
@@ -272,6 +281,45 @@ export default function AdminMerchantDetailPage() {
               </div>
               <p className="text-lg font-bold text-emerald-500">{formatCost(monthlyCost)}</p>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* RAG Embedding Usage */}
+      <div className="glass-card p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 rounded-xl bg-orange-500/10 flex items-center justify-center">
+            <FileText className="w-4.5 h-4.5 text-orange-500" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">RAG Embedding Cost</h3>
+            <p className="text-xs text-muted-foreground">Knowledge base document processing (text-embedding-3-small)</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Total Tokens</p>
+            <p className="text-lg font-bold text-foreground">{stats.embedding.totalTokens.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Total Cost</p>
+            <p className="text-lg font-bold text-orange-500">{formatCost(estimateEmbeddingCost(stats.embedding.totalTokens))}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Sources / Chunks</p>
+            <p className="text-lg font-bold text-foreground">{stats.embedding.totalSources} / {stats.embedding.totalChunks.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Month Tokens</p>
+            <p className="text-lg font-bold text-foreground">{stats.embedding.tokensThisMonth.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Month Cost</p>
+            <p className="text-lg font-bold text-orange-500">{formatCost(estimateEmbeddingCost(stats.embedding.tokensThisMonth))}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Month Sources</p>
+            <p className="text-lg font-bold text-foreground">{stats.embedding.sourcesThisMonth}</p>
           </div>
         </div>
       </div>
