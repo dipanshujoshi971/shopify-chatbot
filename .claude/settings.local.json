@@ -30,7 +30,8 @@
       "Bash(ls \"C:\\\\Users\\\\deepj\\\\OneDrive\\\\Documents\\\\chatbot\\\\shopify-chatbot\\\\packages\\\\db\\\\src\\\\migrations\"\" 2>/dev/null || echo \"no migrations dir \")",
       "Bash(xargs grep:*)",
       "Bash(ls -la \"/c/Users/deepj/OneDrive/Documents/chatbot/shopify-chatbot/apps/dashboard/src/app/\\(admin\\)/admin/\")",
-      "Bash(grep -E \"middleware|\\\\.ts$|\\\\.js$\")"
+      "Bash(grep -E \"middleware|\\\\.ts$|\\\\.js$\")",
+      "Bash(npx turbo:*)"
     ]
   }
 }

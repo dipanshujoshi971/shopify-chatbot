@@ -4,14 +4,15 @@
  * Admin-side tools that require the merchant's encrypted OAuth token.
  * These cannot go through the public Storefront MCP server.
  *
- * Step 5 — Admin API Order Status Tool
+ * get_order_status — GraphQL Admin API
  * ──────────────────────────────────────
- * `get_order_status` calls the Shopify Admin REST API with the merchant's
- * decrypted access token.  It verifies the customer's email to prevent
- * strangers from reading order details.
+ * Uses a two-step GraphQL approach:
+ *   1. Search all orders by customer email
+ *   2. Match the specific order name (#1033)
+ *   3. If matched, fetch full order details
+ *   4. If not matched, tell the customer the order doesn't belong to them
  *
- * Product/knowledge search have been removed from this file — they are now
- * handled by the Shopify Storefront MCP tools in storefrontTools.ts.
+ * This is more secure and uses the proper Shopify GraphQL API.
  */
 
 import { tool }       from 'ai';
@@ -30,6 +31,135 @@ export interface AdminToolContext {
   encryptedShopifyToken: string | null;
 }
 
+// ─── GraphQL helpers ─────────────────────────────────────────────────────────
+
+const GRAPHQL_API_VERSION = '2025-01';
+
+/**
+ * Execute a GraphQL query against the Shopify Admin API.
+ */
+async function shopifyGraphQL(
+  shopDomain: string,
+  accessToken: string,
+  query: string,
+  variables: Record<string, unknown> = {},
+): Promise<any> {
+  const res = await fetch(
+    `https://${shopDomain}/admin/api/${GRAPHQL_API_VERSION}/graphql.json`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': accessToken,
+      },
+      body: JSON.stringify({ query, variables }),
+    },
+  );
+
+  if (!res.ok) {
+    throw new Error(`Shopify GraphQL HTTP ${res.status}: ${res.statusText}`);
+  }
+
+  const json = await res.json() as any;
+
+  if (json.errors?.length > 0) {
+    throw new Error(`Shopify GraphQL error: ${json.errors[0].message}`);
+  }
+
+  return json.data;
+}
+
+// ─── GraphQL Queries ─────────────────────────────────────────────────────────
+
+/**
+ * Step 1: Search orders by customer email.
+ * Returns a list of order names so we can verify ownership.
+ */
+const ORDERS_BY_EMAIL_QUERY = `
+  query GetOrdersByEmail($emailFilter: String!) {
+    orders(first: 50, query: $emailFilter) {
+      edges {
+        node {
+          id
+          name
+          email
+          createdAt
+          displayFinancialStatus
+          displayFulfillmentStatus
+          totalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * Step 2: Get full order details by order name.
+ * Only called after we verify the email owns this order.
+ */
+const ORDER_DETAILS_QUERY = `
+  query GetOrderDetails($nameFilter: String!) {
+    orders(first: 1, query: $nameFilter) {
+      edges {
+        node {
+          id
+          name
+          email
+          createdAt
+          displayFinancialStatus
+          displayFulfillmentStatus
+          totalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          lineItems(first: 50) {
+            edges {
+              node {
+                name
+                title
+                quantity
+                sku
+                variant {
+                  id
+                  title
+                }
+              }
+            }
+          }
+          shippingAddress {
+            name
+            address1
+            city
+            province
+            provinceCode
+            zip
+            country
+          }
+          fulfillments(first: 5) {
+            edges {
+              node {
+                status
+                trackingInfo(first: 5) {
+                  number
+                  company
+                  url
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 // ─── Tool factory ─────────────────────────────────────────────────────────────
 
 export function createAdminTools(ctx: AdminToolContext) {
@@ -38,11 +168,12 @@ export function createAdminTools(ctx: AdminToolContext) {
   return {
 
     // ── get_order_status ──────────────────────────────────────────────────
-    // Step 5: calls Shopify Admin REST API with the merchant's decrypted
-    // OAuth token — the only tool that genuinely needs Admin API access.
+    // Two-step GraphQL approach:
+    //   1. Fetch all orders by customer email → verify ownership
+    //   2. If order name matches, fetch full details
     get_order_status: tool({
       description:
-        'Look up a customer order by order number and email.  ' +
+        'Look up a customer order by email and order number.  ' +
         'Use when the customer asks where their order is, for tracking info, ' +
         'or about any specific order.  ' +
         'IMPORTANT: Both order_identifier and customer_email are required. ' +
@@ -50,7 +181,7 @@ export function createAdminTools(ctx: AdminToolContext) {
       parameters: z.object({
         order_identifier: z
           .string()
-          .describe('Order number (e.g. #1001 or 1001) or numeric order ID'),
+          .describe('Order number (e.g. #1033 or 1033)'),
         customer_email: z
           .string()
           .email()
@@ -63,83 +194,108 @@ export function createAdminTools(ctx: AdminToolContext) {
 
         try {
           const accessToken = decryptToken(ctx.encryptedShopifyToken);
-          const identifier  = order_identifier.replace(/^#/, '');
-          const apiVersion  = '2024-10';
+          const orderNumber = order_identifier.replace(/^#/, '').trim();
+          const orderName   = `#${orderNumber}`;  // Shopify stores as "#1033"
 
-          const url =
-            `https://${ctx.shopDomain}/admin/api/${apiVersion}/orders.json` +
-            `?name=%23${encodeURIComponent(identifier)}&status=any` +
-            `&fields=id,name,financial_status,fulfillment_status,created_at,email,fulfillments,line_items,total_price,currency,shipping_address`;
+          // ── Step 1: Search all orders by customer email ──────────────────
+          const emailData = await shopifyGraphQL(
+            ctx.shopDomain,
+            accessToken,
+            ORDERS_BY_EMAIL_QUERY,
+            { emailFilter: `email:${customer_email}` },
+          );
 
-          const res = await fetch(url, {
-            headers: { 'X-Shopify-Access-Token': accessToken },
-          });
+          const emailOrders = emailData?.orders?.edges ?? [];
 
-          if (!res.ok) {
-            return { found: false, message: 'Could not reach the order system.' };
-          }
-
-          const data  = await res.json() as { orders: any[] };
-          const order = data.orders?.[0];
-
-          if (!order) {
-            return { found: false, message: `No order found with number #${identifier}.` };
-          }
-
-          // Email verification prevents exposing orders to strangers
-          if (order.email?.toLowerCase() !== customer_email.toLowerCase()) {
+          if (emailOrders.length === 0) {
             return {
-              found:   false,
-              message: 'Order found but the email address does not match our records.',
+              found: false,
+              message: `No orders found for email ${customer_email}. Please check the email address and try again.`,
             };
           }
 
-          const fulfillment = order.fulfillments?.[0];
+          // ── Step 2: Check if the requested order belongs to this email ──
+          const matchingOrder = emailOrders.find(
+            (edge: any) => edge.node.name === orderName,
+          );
+
+          if (!matchingOrder) {
+            // The email has orders, but not this specific order number
+            const orderNames = emailOrders.map((e: any) => e.node.name).join(', ');
+            return {
+              found: false,
+              message:
+                `Order ${orderName} does not belong to ${customer_email}. ` +
+                `The orders associated with this email are: ${orderNames}. ` +
+                `Please double-check your order number.`,
+            };
+          }
+
+          // ── Step 3: Fetch full order details ────────────────────────────
+          const detailData = await shopifyGraphQL(
+            ctx.shopDomain,
+            accessToken,
+            ORDER_DETAILS_QUERY,
+            { nameFilter: `name:${orderName}` },
+          );
+
+          const order = detailData?.orders?.edges?.[0]?.node;
+
+          if (!order) {
+            return { found: false, message: `Could not fetch details for order ${orderName}.` };
+          }
 
           // Build line items for OrderCard
-          const lineItems = (order.line_items ?? []).map((item: any) => ({
-            title: item.title ?? item.name ?? 'Unknown',
-            quantity: item.quantity ?? 1,
-            ...(item.variant_title && item.variant_title !== 'Default Title'
-              ? { variant: { title: item.variant_title } }
-              : {}),
-          }));
+          const lineItems = (order.lineItems?.edges ?? []).map((edge: any) => {
+            const item = edge.node;
+            return {
+              title:    item.title ?? 'Unknown',
+              quantity: item.quantity ?? 1,
+              ...(item.variant?.title && item.variant.title !== 'Default Title'
+                ? { variant: { title: item.variant.title } }
+                : {}),
+            };
+          });
 
           // Build shipping address
-          const sa = order.shipping_address;
+          const sa = order.shippingAddress;
           const shippingAddress = sa ? {
-            name: `${sa.first_name ?? ''} ${sa.last_name ?? ''}`.trim() || sa.name || '',
+            name:     sa.name ?? '',
             address1: sa.address1 ?? '',
-            city: sa.city ?? '',
+            city:     sa.city ?? '',
             province: sa.province ?? '',
-            zip: sa.zip ?? '',
-            country: sa.country ?? '',
+            zip:      sa.zip ?? '',
+            country:  sa.country ?? '',
           } : undefined;
 
-          // Build tracking info
-          const trackingInfo = fulfillment?.tracking_number ? {
-            number: fulfillment.tracking_number,
-            company: fulfillment.tracking_company ?? 'Unknown',
-            ...(fulfillment.tracking_url ? { url: fulfillment.tracking_url } : {}),
+          // Build tracking info from fulfillments (GraphQL edges format)
+          const fulfillmentEdges = order.fulfillments?.edges ?? [];
+          const firstFulfillment = fulfillmentEdges[0]?.node;
+          const trackingInfoArr  = firstFulfillment?.trackingInfo ?? [];
+          const firstTracking    = trackingInfoArr[0];
+          const trackingInfo = firstTracking?.number ? {
+            number:  firstTracking.number,
+            company: firstTracking.company ?? 'Unknown',
+            ...(firstTracking.url ? { url: firstTracking.url } : {}),
           } : undefined;
 
           return {
             found:                    true,
-            orderId:                  String(order.id),
-            orderNumber:              order.name?.replace(/^#/, '') ?? identifier,
-            displayFinancialStatus:   (order.financial_status ?? 'pending').replace(/_/g, ' '),
-            displayFulfillmentStatus: (order.fulfillment_status ?? 'unfulfilled').replace(/_/g, ' '),
-            processedAt:              order.created_at,
+            orderId:                  order.id,
+            orderNumber:              order.name?.replace(/^#/, '') ?? orderNumber,
+            displayFinancialStatus:   (order.displayFinancialStatus ?? 'PENDING').toLowerCase().replace(/_/g, ' '),
+            displayFulfillmentStatus: (order.displayFulfillmentStatus ?? 'UNFULFILLED').toLowerCase().replace(/_/g, ' '),
+            processedAt:              order.createdAt,
             lineItems,
             ...(shippingAddress ? { shippingAddress } : {}),
             ...(trackingInfo ? { trackingInfo } : {}),
             totalPrice: {
-              amount: String(order.total_price ?? '0'),
-              currencyCode: order.currency ?? 'USD',
+              amount:       order.totalPriceSet?.shopMoney?.amount ?? '0',
+              currencyCode: order.totalPriceSet?.shopMoney?.currencyCode ?? 'USD',
             },
           };
-        } catch {
-          return { found: false, message: 'Unable to look up that order right now.' };
+        } catch (err) {
+          return { found: false, message: `Unable to look up that order right now. ${(err as Error)?.message ?? ''}` };
         }
       },
     }),

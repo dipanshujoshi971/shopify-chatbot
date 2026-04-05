@@ -52,24 +52,26 @@ export interface PageContext {
 }
 
 // ------------------------------------------------------------------ //
-// Stream Events (parsed from Vercel AI SDK data stream)
+// Chat API Response (consistent JSON from POST /widget/chat)
 // ------------------------------------------------------------------ //
 
-export type StreamEvent =
-  | { type: 'text';        content: string }
-  | { type: 'data';        content: AnnotationEvent[] }
-  | { type: 'error';       content: string }
-  | { type: 'finish';      content: { finishReason: string; usage?: TokenUsage } };
-
-export interface TokenUsage {
-  promptTokens    : number;
-  completionTokens: number;
+/**
+ * Every response from the chat endpoint has this exact shape.
+ * - text: LLM's text response (may be empty if products/cart are the response)
+ * - products: array of products from search (empty array if none)
+ * - cart: cart data if a cart operation was performed (null if none)
+ * - order: order status data if an order lookup was performed (null if none)
+ * - conversationId: the conversation ID to use for follow-up messages
+ */
+export interface ChatApiResponse {
+  text           : string;
+  products       : ShopifyProduct[];
+  cart           : CartResult | null;
+  order          : OrderStatusResult | null;
+  conversationId : string;
 }
 
-// ------------------------------------------------------------------ //
-// StreamData Annotations (sent via `2:` lines)
-// ------------------------------------------------------------------ //
-
+// Keep legacy types for backward compatibility with annotations
 export type AnnotationEvent =
   | ProductResultAnnotation
   | OrderResultAnnotation
@@ -189,10 +191,15 @@ export interface ChatMessage {
   id        : string;
   role      : MessageRole;
   content   : string;
-  /** Rich UI data attached to this message (product carousel / order card / cart) */
-  annotations?: AnnotationEvent[];
+  /** Products from search_shop_catalog (empty array if none) */
+  products  ?: ShopifyProduct[] | undefined;
+  /** Cart data from get_cart / update_cart */
+  cart      ?: CartResult | null | undefined;
+  /** Order data from get_order_status */
+  order     ?: OrderStatusResult | null | undefined;
   timestamp : number;
-  streaming ?: boolean;
+  /** True while waiting for the API response */
+  loading   ?: boolean;
 }
 
 // ------------------------------------------------------------------ //

@@ -7,17 +7,16 @@
  *   - Remote appearance config (theme, greeting, position)
  *   - Page context awareness with contextual starter questions
  *   - Support ticket submission
- *   - Product carousel, order card, cart card annotations
+ *   - Consistent JSON response rendering (products, cart, order)
  *   - Starter buttons (from config + page context)
- *   - 30s safety-net timeout for hung streams
  */
 
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import type {
   WidgetConfig, ChatMessage, ConsentStatus,
-  AnnotationEvent, RemoteConfig, PageContext,
+  RemoteConfig, PageContext, ChatApiResponse,
 } from '../types.js';
-import { streamChat, newConversationId, getOrCreateSessionId } from '../api/stream.js';
+import { sendChatMessage, newConversationId, getOrCreateSessionId } from '../api/stream.js';
 import { fetchWidgetConfig } from '../api/config.js';
 import { getConsentStatus, requestConsent, onConsentChange } from '../consent/shopify.js';
 import { detectPageContext, getContextualQuestions } from '../lib/pageContext.js';
@@ -112,13 +111,11 @@ function RefreshIcon() {
 function MessageText({ text, isUser }: { text: string; isUser: boolean }) {
   if (isUser) return <>{text}</>;
 
-  // Parse simple markdown: **bold**, [link](url), ![img](url), `code`
   const parts: (string | preact.JSX.Element)[] = [];
   let remaining = text;
   let key = 0;
 
   while (remaining.length > 0) {
-    // Find the earliest match
     const patterns = [
       { regex: /\*\*(.+?)\*\*/, type: 'bold' },
       { regex: /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/, type: 'link' },
@@ -139,12 +136,10 @@ function MessageText({ text, isUser }: { text: string; isUser: boolean }) {
       break;
     }
 
-    // Add text before the match
     if (earliest.index > 0) {
       parts.push(remaining.slice(0, earliest.index));
     }
 
-    // Render the match
     const m = earliest.match;
     switch (earliest.type) {
       case 'bold':
@@ -168,43 +163,19 @@ function MessageText({ text, isUser }: { text: string; isUser: boolean }) {
   return <>{parts}</>;
 }
 
-// ── Rich annotation renderer ───────────────────────────────────────
-
-function RichContent({ annotations, onSendMessage }: { annotations: AnnotationEvent[]; onSendMessage?: (text: string) => void }) {
-  return (
-    <>
-      {annotations.map((annotation, i) => {
-        if (annotation.toolName === 'search_shop_catalog') {
-          return <ProductCarousel key={i} data={annotation.result} {...(onSendMessage ? { onSendMessage } : {})} />;
-        }
-        if (annotation.toolName === 'get_order_status') {
-          return <OrderCard key={i} data={annotation.result} />;
-        }
-        if (annotation.toolName === 'get_cart' || annotation.toolName === 'update_cart') {
-          return <CartCard key={i} data={annotation.result} />;
-        }
-        return null;
-      })}
-    </>
-  );
-}
-
 // ── Message bubble ─────────────────────────────────────────────────
 
 function MessageBubble({ msg, onSendMessage }: { msg: ChatMessage; onSendMessage?: (text: string) => void }) {
   const isUser = msg.role === 'user';
-  // Don't render empty streaming messages — typing indicator handles that
-  if (msg.streaming && !msg.content && !(msg.annotations?.length)) return null;
 
   const hasContent = !!msg.content;
-  const showCursor = msg.streaming && hasContent;
+  const hasProducts = !isUser && msg.products && msg.products.length > 0;
+  const hasCart = !isUser && msg.cart != null;
+  const hasOrder = !isUser && msg.order != null;
+  const hasRichContent = hasProducts || hasCart;
 
-  // Hide text bubble when rich annotations (product carousel, cart card) are present
-  // — the carousel/card IS the response, text would be redundant
-  const hasRichAnnotations = !isUser && msg.annotations?.some(
-    (a) => a.toolName === 'search_shop_catalog' || a.toolName === 'get_cart' || a.toolName === 'update_cart',
-  );
-  const showTextBubble = hasContent && !hasRichAnnotations;
+  // Hide text bubble when rich content (products/cart) is the primary response
+  const showTextBubble = hasContent && !hasRichContent;
 
   return (
     <div class={`sb-msg sb-msg-${msg.role}`}>
@@ -215,12 +186,21 @@ function MessageBubble({ msg, onSendMessage }: { msg: ChatMessage; onSendMessage
       )}
       <div class="sb-msg-content">
         {showTextBubble && (
-          <div class={`sb-bubble sb-bubble-${msg.role}${showCursor ? ' sb-cursor' : ''}`}>
+          <div class={`sb-bubble sb-bubble-${msg.role}`}>
             <MessageText text={msg.content} isUser={isUser} />
           </div>
         )}
-        {!isUser && msg.annotations && msg.annotations.length > 0 && (
-          <RichContent annotations={msg.annotations} {...(onSendMessage ? { onSendMessage } : {})} />
+        {hasProducts && (
+          <ProductCarousel
+            data={{ products: msg.products!, query: '' }}
+            {...(onSendMessage ? { onSendMessage } : {})}
+          />
+        )}
+        {hasOrder && (
+          <OrderCard data={msg.order!} />
+        )}
+        {hasCart && (
+          <CartCard data={msg.cart!} />
         )}
         <span class="sb-msg-time">{formatTime(msg.timestamp)}</span>
       </div>
@@ -305,17 +285,16 @@ export function Widget({ config }: WidgetProps) {
 
   const [open,           setOpen]          = useState(() => loadFromSession(STORAGE_KEY_WIDGET_OPEN, false));
   const [messages,       setMessages]      = useState<ChatMessage[]>(() => {
-    // Restore messages from sessionStorage (strip streaming flag)
     const saved = loadFromSession<ChatMessage[]>(STORAGE_KEY_MESSAGES, []);
-    return saved.map((m) => ({ ...m, streaming: false }));
+    return saved.map((m) => ({ ...m, loading: false }));
   });
   const [input,          setInput]         = useState('');
-  const [streaming,      setStreaming]     = useState(false);
+  const [loading,        setLoading]       = useState(false);
   const [consent,        setConsent]       = useState<ConsentStatus>(() => getConsentStatus());
   const [conversationId, setConversationId] = useState(() =>
     loadFromSession<string>(STORAGE_KEY_CONVERSATION, '') || newConversationId(),
   );
-  const [sessionId,      setSessionId]      = useState(() => getOrCreateSessionId());
+  const [sessionId]      = useState(() => getOrCreateSessionId());
   const [unread,         setUnread]        = useState(0);
   const [showTicket,     setShowTicket]    = useState(false);
   const [remoteConfig,   setRemoteConfig]  = useState<RemoteConfig | null>(null);
@@ -324,8 +303,6 @@ export function Widget({ config }: WidgetProps) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
-  const abortRef       = useRef<AbortController | null>(null);
-  const timeoutRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Derived config values
   const position   = remoteConfig?.position ?? config.position ?? 'right';
@@ -333,7 +310,7 @@ export function Widget({ config }: WidgetProps) {
   const greeting   = remoteConfig?.greeting ?? `Hi there! How can I help you today?`;
   const themeColor = remoteConfig?.themeColor ?? config.accentColor ?? '#059669';
 
-  // Build starter buttons: merge remote config + contextual questions
+  // Build starter buttons
   const starters = (() => {
     const remote = remoteConfig?.starterButtons ?? [];
     if (remote.length > 0) return remote.slice(0, 4);
@@ -343,13 +320,12 @@ export function Widget({ config }: WidgetProps) {
   // Expose shop domain for ProductCarousel links
   useEffect(() => { (window as any).__shopbot_domain__ = shopDomain; }, [shopDomain]);
 
-  // ── Persist chat state to sessionStorage (survives page navigation) ──
+  // ── Persist chat state to sessionStorage ──
   useEffect(() => {
-    // Only persist non-streaming messages (strip streaming state)
-    if (!streaming) {
+    if (!loading) {
       saveToSession(STORAGE_KEY_MESSAGES, messages);
     }
-  }, [messages, streaming]);
+  }, [messages, loading]);
 
   useEffect(() => { saveToSession(STORAGE_KEY_CONVERSATION, conversationId); }, [conversationId]);
   useEffect(() => { saveToSession(STORAGE_KEY_WIDGET_OPEN, open); }, [open]);
@@ -368,7 +344,6 @@ export function Widget({ config }: WidgetProps) {
     if (host) {
       host.style.setProperty('--sb-accent', themeColor);
       host.style.setProperty('--sb-accent-hover', themeColor);
-      // Toggle dark mode class based on remote config
       const isDark = remoteConfig?.mode === 'dark';
       host.classList.toggle('sb-dark', isDark);
     }
@@ -403,36 +378,21 @@ export function Widget({ config }: WidgetProps) {
   // Send message
   const sendMessage = useCallback(async (overrideText?: string) => {
     const text = (overrideText ?? input).trim();
-    if (!text || streaming) return;
+    if (!text || loading) return;
 
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
+    // Add user message
     const userMsg: ChatMessage = { id: uid(), role: 'user', content: text, timestamp: Date.now() };
-    setMessages((prev) => [...prev, userMsg]);
-
+    // Add a loading placeholder for the assistant
     const assistantId = uid();
-    setMessages((prev) => [
-      ...prev,
-      { id: assistantId, role: 'assistant', content: '', timestamp: Date.now(), streaming: true },
-    ]);
-    setStreaming(true);
+    const loadingMsg: ChatMessage = {
+      id: assistantId, role: 'assistant', content: '', timestamp: Date.now(), loading: true,
+    };
 
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-
-    // 30-second safety net
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId && m.streaming
-            ? { ...m, content: m.content || 'Response timed out. Please try again.', streaming: false }
-            : m,
-        ),
-      );
-      setStreaming(false);
-    }, 30_000);
+    setMessages((prev) => [...prev, userMsg, loadingMsg]);
+    setLoading(true);
 
     // Include page context in the first message
     const contextPrefix = messages.length === 0 && pageCtx.type !== 'other' && pageCtx.type !== 'home'
@@ -440,7 +400,7 @@ export function Widget({ config }: WidgetProps) {
       : '';
 
     try {
-      const gen = streamChat({
+      const response: ChatApiResponse = await sendChatMessage({
         apiBaseUrl,
         apiKey,
         shopDomain,
@@ -449,67 +409,39 @@ export function Widget({ config }: WidgetProps) {
         message: contextPrefix + text,
       });
 
-      for await (const event of gen) {
-        switch (event.type) {
-          case 'text':
-            setMessages((prev) =>
-              prev.map((m) => m.id === assistantId ? { ...m, content: m.content + event.content } : m),
-            );
-            break;
-
-          case 'data':
-            for (const annotation of event.content) {
-              if (
-                annotation.toolName === 'search_shop_catalog' ||
-                annotation.toolName === 'get_order_status' ||
-                annotation.toolName === 'get_cart' ||
-                annotation.toolName === 'update_cart'
-              ) {
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantId
-                      ? { ...m, annotations: [...(m.annotations ?? []), annotation] }
-                      : m,
-                  ),
-                );
-              }
-            }
-            break;
-
-          case 'error':
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, content: `${event.content}`, streaming: false } : m,
-              ),
-            );
-            break;
-
-          case 'finish':
-            setMessages((prev) =>
-              prev.map((m) => m.id === assistantId ? { ...m, streaming: false } : m),
-            );
-            break;
-        }
+      // Update conversation ID from response (important for first message)
+      if (response.conversationId && response.conversationId !== conversationId) {
+        setConversationId(response.conversationId);
       }
-    } catch (err: unknown) {
-      if ((err as Error)?.name === 'AbortError') return;
+
+      // Replace loading placeholder with the actual response
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
-            ? { ...m, content: 'Something went wrong. Please try again.', streaming: false }
+            ? {
+                ...m,
+                content:  response.text,
+                products: response.products.length > 0 ? response.products : undefined,
+                cart:     response.cart,
+                order:    response.order,
+                loading:  false,
+              }
+            : m,
+        ),
+      );
+    } catch (err: unknown) {
+      // Replace loading placeholder with error
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? { ...m, content: (err as Error)?.message || 'Something went wrong. Please try again.', loading: false }
             : m,
         ),
       );
     } finally {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      // Always mark the assistant message as done streaming — handles edge cases
-      // where the `finish` event never arrives (stream ends after tool calls)
-      setMessages((prev) =>
-        prev.map((m) => m.id === assistantId && m.streaming ? { ...m, streaming: false } : m),
-      );
-      setStreaming(false);
+      setLoading(false);
     }
-  }, [input, streaming, apiBaseUrl, apiKey, shopDomain, sessionId, conversationId, messages.length, pageCtx]);
+  }, [input, loading, apiBaseUrl, apiKey, shopDomain, sessionId, conversationId, messages.length, pageCtx]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } },
@@ -528,7 +460,6 @@ export function Widget({ config }: WidgetProps) {
   }, []);
 
   const handleTicketSubmitted = useCallback((msg: string) => {
-    // Add a system message about the ticket
     setMessages((prev) => [
       ...prev,
       { id: uid(), role: 'assistant', content: msg, timestamp: Date.now() },
@@ -537,19 +468,13 @@ export function Widget({ config }: WidgetProps) {
 
   // Clear chat and refresh session
   const handleClearChat = useCallback(() => {
-    if (streaming) {
-      abortRef.current?.abort();
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      setStreaming(false);
-    }
     setMessages([]);
     setConversationId(newConversationId());
-    // Clear all persisted chat state
     removeFromSession(STORAGE_KEY_MESSAGES);
     removeFromSession(STORAGE_KEY_CONVERSATION);
     try { sessionStorage.removeItem('shopbot_session_id'); } catch {}
-    setSessionId(getOrCreateSessionId());
-  }, [streaming]);
+    setLoading(false);
+  }, []);
 
   // Popup hint for product pages
   const [showHint, setShowHint] = useState(false);
@@ -561,7 +486,6 @@ export function Widget({ config }: WidgetProps) {
     setShowHint(false);
   }, [pageCtx.type, open]);
 
-  // Don't render anything until config is loaded (prevents flash of defaults)
   if (!configLoaded) {
     return null;
   }
@@ -578,7 +502,7 @@ export function Widget({ config }: WidgetProps) {
                 <p class="sb-header-title">{botName}</p>
                 <p class="sb-header-subtitle">
                   <span class="sb-online-dot" aria-hidden="true" />
-                  {streaming ? 'Typing...' : 'Online'}
+                  {loading ? 'Typing...' : 'Online'}
                 </p>
               </div>
             </div>
@@ -641,19 +565,17 @@ export function Widget({ config }: WidgetProps) {
                     onStarterClick={handleStarterClick}
                   />
                 ) : (
-                  messages.map((msg) => <MessageBubble key={msg.id} msg={msg} onSendMessage={sendMessage} />)
+                  messages.map((msg) => {
+                    // Don't render the loading placeholder as a bubble — show typing indicator instead
+                    if (msg.loading) return null;
+                    return <MessageBubble key={msg.id} msg={msg} onSendMessage={sendMessage} />;
+                  })
                 )}
-                {streaming && (() => {
-                  // Hide typing indicator once annotations (carousel/cards) have arrived
-                  const lastMsg = messages[messages.length - 1];
-                  const hasAnnotations = lastMsg?.role === 'assistant' && lastMsg.annotations && lastMsg.annotations.length > 0;
-                  if (hasAnnotations) return null;
-                  return (
-                    <div class="sb-typing" aria-label="Assistant is typing">
-                      <span /><span /><span />
-                    </div>
-                  );
-                })()}
+                {loading && (
+                  <div class="sb-typing" aria-label="Assistant is typing">
+                    <span /><span /><span />
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
 
@@ -664,7 +586,7 @@ export function Widget({ config }: WidgetProps) {
                   placeholder={`Message ${botName}...`}
                   value={input}
                   rows={1}
-                  disabled={false}
+                  disabled={loading}
                   onInput={(e) => { setInput((e.target as HTMLTextAreaElement).value); resizeTextarea(); }}
                   onKeyDown={handleKeyDown}
                   aria-label="Chat message input"
@@ -672,7 +594,7 @@ export function Widget({ config }: WidgetProps) {
                 <button
                   class="sb-send-btn"
                   onClick={() => sendMessage()}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() || loading}
                   aria-label="Send message"
                 >
                   <SendIcon />

@@ -305,10 +305,25 @@ function tryParseProduct(item: unknown, shopDomain: string): ParsedProduct | nul
   }
 
   // Extract variants (sizes, colors, etc.)
-  // Handles both GraphQL format and MCP flat format:
-  //   GraphQL: { id, title, price: { amount, currencyCode }, availableForSale }
-  //   MCP flat: { variant_id, title, price: "1499.0", currency: "USD", available: true }
+  // Handles multiple formats:
+  //   GraphQL: { variants: { edges: [{ node: { id, title, price, availableForSale } }] } }
+  //   MCP flat array: { variants: [{ variant_id, title, price, available }] }
+  //   MCP flat single: { variant_id: "gid://shopify/ProductVariant/123" } (top-level, one per product)
   const variants: ParsedVariant[] = [];
+
+  // Strategy 1: Top-level variant_id (Shopify MCP flat format — one variant per product entry)
+  // The MCP search_shop_catalog returns each product with a single variant_id at the top level.
+  // This is the MOST IMPORTANT case for cart operations — without this, add-to-cart breaks.
+  if (obj.variant_id && typeof obj.variant_id === 'string') {
+    variants.push({
+      id: obj.variant_id,
+      title: obj.variant_title ?? 'Default',
+      price: { amount, currencyCode },
+      availableForSale: obj.availableForSale ?? obj.available ?? true,
+    });
+  }
+
+  // Strategy 2: Nested variants array
   if (Array.isArray(obj.variants)) {
     const variantItems = obj.variants.map((v: any) => v?.node ?? v).filter(Boolean);
     for (const v of variantItems) {
@@ -316,6 +331,8 @@ function tryParseProduct(item: unknown, shopDomain: string): ParsedProduct | nul
       const vTitle = v.title ?? v.name;
       const vId = v.id ?? v.variant_id ?? '';
       if (!vTitle && !vId) continue;
+      // Skip if we already added this variant from top-level variant_id
+      if (variants.some((existing) => existing.id === String(vId))) continue;
       const variant: ParsedVariant = {
         id: String(vId),
         title: String(vTitle ?? 'Default'),
@@ -326,10 +343,8 @@ function tryParseProduct(item: unknown, shopDomain: string): ParsedProduct | nul
       } else if (v.priceV2?.amount) {
         variant.price = { amount: String(v.priceV2.amount), currencyCode: v.priceV2.currencyCode ?? currencyCode };
       } else if (typeof v.price === 'string' || typeof v.price === 'number') {
-        // MCP flat format: price as string/number + currency as separate field
         variant.price = { amount: String(v.price), currencyCode: v.currency ?? currencyCode };
       }
-      // Available — handle both formats
       if (v.availableForSale != null) {
         variant.availableForSale = Boolean(v.availableForSale);
       } else if (v.available != null) {
@@ -338,12 +353,13 @@ function tryParseProduct(item: unknown, shopDomain: string): ParsedProduct | nul
       variants.push(variant);
     }
   } else if (Array.isArray(obj.edges)) {
-    // GraphQL edges format for variants
     for (const edge of obj.edges) {
       const v = edge?.node;
       if (!v) continue;
+      const vId = String(v.id ?? '');
+      if (variants.some((existing) => existing.id === vId)) continue;
       variants.push({
-        id: String(v.id ?? ''),
+        id: vId,
         title: String(v.title ?? 'Default'),
         ...(v.price?.amount ? { price: { amount: String(v.price.amount), currencyCode: v.price.currencyCode ?? currencyCode } } : {}),
         ...(v.availableForSale != null ? { availableForSale: Boolean(v.availableForSale) } : {}),
@@ -558,15 +574,14 @@ export function createStorefrontMCPTools(shopDomain: string) {
           // Also get the text for the LLM to use in its response
           const text = mcpContentToText(rawContent);
 
-          if (products.length > 0) {
-            return {
-              __shopbot_products: products,
-              __shopbot_query: query,
-              text,
-            };
-          }
-
-          return text;
+          // Always return products + text so the LLM can see variant IDs.
+          // Even if extraction found 0 products, include the raw text so the
+          // LLM can read variant IDs directly from the MCP response.
+          return {
+            __shopbot_products: products,
+            __shopbot_query: query,
+            text,
+          };
         } catch (err) {
           return `Product search is temporarily unavailable. Please try again shortly. (${(err as Error).message})`;
         }
@@ -614,13 +629,11 @@ export function createStorefrontMCPTools(shopDomain: string) {
       execute: async ({ cart_id }) => {
         try {
           const rawContent = await callShopifyMCPRaw(shopDomain, 'get_cart', { cart_id });
+          const text = mcpContentToText(rawContent);
           const cartResult = extractCartResult(rawContent);
-          if (cartResult) {
-            return { __shopbot_cart: cartResult, text: mcpContentToText(rawContent) };
-          }
-          return mcpContentToText(rawContent);
-        } catch {
-          return 'Could not retrieve the cart right now. Please try again.';
+          return { __shopbot_cart: cartResult, text };
+        } catch (err) {
+          return { __shopbot_cart: null, text: `Could not retrieve the cart. ${(err as Error)?.message ?? ''}` };
         }
       },
     }),
@@ -630,8 +643,9 @@ export function createStorefrontMCPTools(shopDomain: string) {
       description:
         'Add items to a cart, update quantities, or remove items (quantity = 0).  ' +
         'Creates a new cart if no cart_id is provided.  ' +
-        'Use the merchandise_id (variant GID) from search_shop_catalog results.  ' +
-        'Always confirm the correct product variant with the customer before adding.',
+        'IMPORTANT: The merchandise_id MUST be a product variant GID like ' +
+        '"gid://shopify/ProductVariant/12345" from search_shop_catalog results.  ' +
+        'Do NOT pass product names or product IDs — only variant GIDs work.',
       parameters: z.object({
         cart_id: z
           .string()
@@ -642,7 +656,10 @@ export function createStorefrontMCPTools(shopDomain: string) {
             z.object({
               merchandise_id: z
                 .string()
-                .describe('Product variant GID from catalog search results'),
+                .describe(
+                  'Product variant GID — MUST be "gid://shopify/ProductVariant/XXXXX" format. ' +
+                  'Get this from the variant_id field in search_shop_catalog results.',
+                ),
               quantity: z
                 .number()
                 .int()
@@ -661,13 +678,11 @@ export function createStorefrontMCPTools(shopDomain: string) {
           const args: Record<string, unknown> = { add_items };
           if (cart_id) args.cart_id = cart_id;
           const rawContent = await callShopifyMCPRaw(shopDomain, 'update_cart', args);
+          const text = mcpContentToText(rawContent);
           const cartResult = extractCartResult(rawContent);
-          if (cartResult) {
-            return { __shopbot_cart: cartResult, text: mcpContentToText(rawContent) };
-          }
-          return mcpContentToText(rawContent);
-        } catch {
-          return 'Could not update the cart right now. Please try again.';
+          return { __shopbot_cart: cartResult, text };
+        } catch (err) {
+          return { __shopbot_cart: null, text: `Could not update the cart. ${(err as Error)?.message ?? ''}` };
         }
       },
     }),

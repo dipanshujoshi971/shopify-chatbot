@@ -3,19 +3,22 @@
  *
  * POST /widget/chat
  * Requires widgetAuth middleware (sets request.tenantId + request.shopDomain).
- * Streams LLM responses in Vercel AI SDK data-stream format.
  *
- * Fixes applied:
- *   1. closeStreamData() helper prevents double-close between onError + onFinish
- *   2. onError handler logs the real LLM error instead of swallowing it
- *   3. onFinish DB writes wrapped in try/catch so a DB failure can't corrupt the stream
- *   4. tokensUsed guarded with Number.isFinite() to prevent NaN → Postgres integer error
- *   5. onStepFinish only appends structured tool results the widget can render
+ * Returns a consistent JSON response for every request:
+ * {
+ *   text: string,
+ *   products: ShopifyProduct[],
+ *   cart: CartResult | null,
+ *   order: OrderStatusResult | null,
+ *   conversationId: string,
+ * }
+ *
+ * This replaces the previous streaming approach to ensure the widget
+ * always receives a predictable structure it can render without breaking.
  */
 
 import type { FastifyPluginAsync } from 'fastify';
-import { streamText, StreamData, type CoreMessage } from 'ai';
-import { Readable }    from 'node:stream';
+import { generateText, type CoreMessage } from 'ai';
 import { nanoid }      from 'nanoid';
 import { merchants, eq } from '@chatbot/db';
 import { valkey }      from '../../valkey.js';
@@ -136,7 +139,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
       let currentTotalTokens = 0;
 
       if (!body.conversationId) {
-        // Case (a): brand-new conversation, no ID from client
         await pgPool.unsafe(
           `INSERT INTO "tenant_${safeName}"."conversations"
              (id, session_id, status, total_tokens_used, total_turns, created_at, updated_at)
@@ -144,7 +146,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
           [conversationId, body.sessionId],
         );
       } else {
-        // Cases (b) and (c): client supplied an ID
         const [conv] = await pgPool.unsafe(
           `SELECT id, total_tokens_used, total_turns, status
              FROM "tenant_${safeName}"."conversations"
@@ -153,7 +154,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         ) as any[];
 
         if (!conv) {
-          // Case (c): client-generated ID, row doesn't exist yet — create it
           request.log.info({ conversationId }, 'chat: client-supplied conversationId not found — creating new conversation');
           await pgPool.unsafe(
             `INSERT INTO "tenant_${safeName}"."conversations"
@@ -162,7 +162,6 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
             [conversationId, body.sessionId],
           );
         } else {
-          // Case (b): existing conversation — validate status and load budgets
           if (conv.status !== 'active') {
             return reply.code(400).send({ error: 'Conversation is closed' });
           }
@@ -207,7 +206,22 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
           let text = row.content as string;
           try {
             const parsed = JSON.parse(row.content);
-            text = parsed.type === 'text' ? parsed.text : JSON.stringify(parsed);
+            if (parsed.type === 'text') {
+              text = parsed.text ?? '';
+              // If the message included product data (with variant IDs), append
+              // a compact summary so the LLM can use variant IDs in future turns.
+              if (Array.isArray(parsed.products) && parsed.products.length > 0) {
+                const productSummary = parsed.products.map((p: any) => {
+                  const variants = (p.variants ?? []).map((v: any) =>
+                    `  - variant_id: ${v.id}, title: "${v.title}", price: ${v.price?.amount ?? '?'} ${v.price?.currencyCode ?? ''}, available: ${v.availableForSale ?? '?'}`
+                  ).join('\n');
+                  return `Product: "${p.title}" (handle: ${p.handle})\n${variants}`;
+                }).join('\n\n');
+                text += `\n\n[Previously shown products with variant IDs for cart operations]\n${productSummary}`;
+              }
+            } else {
+              text = JSON.stringify(parsed);
+            }
           } catch { /* plain string is fine */ }
           return { role: row.role as 'user' | 'assistant', content: text };
         });
@@ -247,293 +261,180 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         ? `[cart_id: ${body.cartId}]\n${body.message}`
         : body.message;
 
-      // ── 9. StreamData for tool annotations ────────────────────────────────
-      //
-      // FIX: Use a close-once helper so that onError and onFinish can both
-      // call it safely without throwing "already closed" errors.
-      //
-      const streamData = new StreamData();
-      let streamDataClosed = false;
-      const closeStreamData = () => {
-        if (!streamDataClosed) {
-          streamDataClosed = true;
-          streamData.close();
-        }
-      };
-
       const llmInfo = getLLMInfo('fast');
-      request.log.info({ tenantId, conversationId, ...llmInfo }, 'chat_stream_start');
+      request.log.info({ tenantId, conversationId, ...llmInfo }, 'chat_request_start');
 
-      // ── 10. Call LLM via Vercel AI SDK ────────────────────────────────────
-      const result = streamText({
-        model:    getLLMModel('fast'),
-        system:   systemPrompt,
-        messages: [
-          ...history,
-          { role: 'user', content: userMessage },
-        ],
-        tools,
-        maxSteps: HARD_LIMITS.maxSteps,
+      // ── 9. Call LLM via generateText (non-streaming, consistent output) ──
+      try {
+        const result = await generateText({
+          model:    getLLMModel('fast'),
+          system:   systemPrompt,
+          messages: [
+            ...history,
+            { role: 'user', content: userMessage },
+          ],
+          tools,
+          maxSteps: HARD_LIMITS.maxSteps,
+        });
 
-        // FIX: Catch real LLM errors and log them. Without this the SDK
-        // emits a generic "3:An error occurred." line and the widget shows
-        // a vague warning. Now the real cause is visible in the API logs.
-        onError: ({ error }) => {
-          request.log.error(
-            { tenantId, conversationId, err: error },
-            'chat: streamText error',
-          );
-          closeStreamData();
-        },
+        // ── 10. Build consistent JSON response from tool results ────────────
+        const responseText = result.text ?? '';
+        let products: any[] = [];
+        let cart: any = null;
+        let order: any = null;
 
-        // FIX: Only append tool results that the widget knows how to render.
-        // The Shopify MCP storefront tools return plain text — appending them
-        // as annotations makes the widget try (and fail) to render a carousel.
-        // get_order_status returns a structured object the OrderCard can use.
-        onStepFinish: async ({ toolResults }) => {
-          if (!toolResults?.length) return;
-          for (const tr of toolResults) {
+        // Walk through all steps to collect tool results
+        for (const step of result.steps) {
+          if (!step.toolResults?.length) continue;
+
+          for (const tr of step.toolResults) {
             request.log.info(
-              { toolName: tr.toolName, resultType: typeof tr.result, hasProducts: !!(tr.result as any)?.__shopbot_products },
-              'chat: onStepFinish tool result',
+              { toolName: tr.toolName, resultType: typeof tr.result, resultKeys: tr.result && typeof tr.result === 'object' ? Object.keys(tr.result as any) : null },
+              'chat: tool result received',
             );
 
-            // search_shop_catalog: extract parsed products for carousel
+            // Product search results
             if (tr.toolName === 'search_shop_catalog') {
-              const result = tr.result as any;
-              if (result?.__shopbot_products?.length > 0) {
+              const toolResult = tr.result as any;
+              const extractedProducts = toolResult?.__shopbot_products ?? [];
+              if (extractedProducts.length > 0) {
+                products = extractedProducts;
                 request.log.info(
-                  { productCount: result.__shopbot_products.length },
-                  'chat: forwarding product carousel annotation',
-                );
-                const safePayload = JSON.parse(JSON.stringify({
-                  type      : 'tool_result',
-                  toolName  : 'search_shop_catalog',
-                  toolCallId: tr.toolCallId,
-                  result    : {
-                    products: result.__shopbot_products,
-                    query:    result.__shopbot_query ?? '',
-                  },
-                }));
-                streamData.append(safePayload);
-              } else {
-                request.log.warn(
-                  { resultKeys: result && typeof result === 'object' ? Object.keys(result) : typeof result },
-                  'chat: search_shop_catalog returned no __shopbot_products',
+                  { productCount: products.length, hasVariants: products.some((p: any) => p.variants?.length > 0) },
+                  'chat: products extracted from search',
                 );
               }
             }
-            // get_order_status: forward directly (already structured)
+
+            // Order status results
             if (tr.toolName === 'get_order_status') {
-              const result = tr.result as any;
-              // Only forward if the order was found
-              if (result?.found !== false && result?.orderNumber) {
-                const safePayload = JSON.parse(JSON.stringify({
-                  type      : 'tool_result',
-                  toolName  : tr.toolName,
-                  toolCallId: tr.toolCallId,
-                  result    : result,
-                }));
-                streamData.append(safePayload);
+              const toolResult = tr.result as any;
+              if (toolResult?.found !== false && toolResult?.orderNumber) {
+                order = toolResult;
               }
+              request.log.info(
+                { found: toolResult?.found, orderNumber: toolResult?.orderNumber, message: toolResult?.message },
+                'chat: order result',
+              );
             }
-            // get_cart, update_cart: extract parsed cart data
+
+            // Cart results (get_cart or update_cart)
             if (tr.toolName === 'get_cart' || tr.toolName === 'update_cart') {
-              const result = tr.result as any;
-              const cartData = result?.__shopbot_cart;
-              if (cartData) {
-                request.log.info(
-                  { cartId: cartData.cartId, totalQuantity: cartData.totalQuantity },
-                  'chat: forwarding cart card annotation',
-                );
-                const safePayload = JSON.parse(JSON.stringify({
-                  type      : 'tool_result',
-                  toolName  : tr.toolName,
-                  toolCallId: tr.toolCallId,
-                  result    : cartData,
-                }));
-                streamData.append(safePayload);
-              } else {
-                request.log.warn(
-                  { resultType: typeof result },
-                  'chat: cart tool returned no __shopbot_cart',
-                );
+              const toolResult = tr.result as any;
+              if (toolResult?.__shopbot_cart) {
+                cart = toolResult.__shopbot_cart;
               }
+              request.log.info(
+                { hasCart: !!cart, cartId: cart?.cartId, toolText: toolResult?.text?.substring(0, 200) },
+                'chat: cart result',
+              );
             }
           }
-        },
+        }
 
-        onFinish: async ({ text, usage, steps }) => {
-          // FIX: close first so the HTTP stream terminates before the DB
-          // writes — the client never waits for DB persistence anyway.
-          closeStreamData();
-
-          // Helper: safely extract a number, treating NaN/undefined/null as 0.
-          // CRITICAL: The `??` operator does NOT catch NaN (NaN is not null/undefined),
-          // so `NaN ?? 0` still returns NaN. We must use Number.isFinite explicitly.
-          const safeNum = (v: unknown): number => {
-            const n = Number(v);
-            return Number.isFinite(n) ? n : 0;
-          };
-
-          // Accumulate tokens across ALL steps for multi-step tool calls.
-          // With maxSteps > 1, `usage` only reports the last step's tokens.
-          let promptTokensTotal = 0;
-          let completionTokensTotal = 0;
-          if (steps && steps.length > 0) {
-            for (const step of steps) {
-              promptTokensTotal += safeNum(step.usage?.promptTokens);
-              completionTokensTotal += safeNum(step.usage?.completionTokens);
-            }
-          }
-          // Fallback: if steps didn't yield tokens, try the top-level usage
-          if (promptTokensTotal === 0 && completionTokensTotal === 0) {
-            promptTokensTotal = safeNum(usage?.promptTokens);
-            completionTokensTotal = safeNum(usage?.completionTokens);
-          }
-          const tokensUsed = promptTokensTotal + completionTokensTotal;
-
-          request.log.info(
-            {
-              tenantId,
-              conversationId,
-              tokensUsed,
-              promptTokens: promptTokensTotal,
-              completionTokens: completionTokensTotal,
-              totalSteps: steps?.length ?? 1,
-              stepsUsage: steps?.map((s, i) => ({
-                step: i,
-                prompt: s.usage?.promptTokens,
-                completion: s.usage?.completionTokens,
-              })),
-              finalUsage: {
-                prompt: usage?.promptTokens,
-                completion: usage?.completionTokens,
-              },
-            },
-            'chat: token accounting',
-          );
-
-          const newTurns  = currentTurns + 1;
-          const newTokens = currentTotalTokens + tokensUsed;
-
-          // Valkey budget counters — fire-and-forget, never block the stream
-          valkey
-            .pipeline()
-            .hset(budgetKey(tenantId, conversationId), 'turns', String(newTurns), 'tokens', String(newTokens))
-            .expire(budgetKey(tenantId, conversationId), 86_400)
-            .exec()
-            .catch((err) =>
-              request.log.warn({ err }, 'chat: Valkey budget update failed'),
-            );
-
-          // FIX: Wrap DB writes in try/catch. An unhandled rejection here
-          // previously caused Fastify to emit a "response terminated with
-          // an error with headers already sent" warning and corrupted the
-          // stream close signal, leaving the widget stuck in loading state.
-          try {
-            await pgPool.unsafe(
-              `INSERT INTO "tenant_${safeName}"."messages"
-                 (id, conversation_id, role, content, created_at)
-               VALUES ($1, $2, 'assistant', $3, now())`,
-              [nanoid(), conversationId, JSON.stringify({ type: 'text', text })],
-            );
-
-            await pgPool.unsafe(
-              `UPDATE "tenant_${safeName}"."conversations"
-                  SET total_tokens_used  = total_tokens_used + $1,
-                      prompt_tokens      = prompt_tokens + $2,
-                      completion_tokens  = completion_tokens + $3,
-                      total_turns        = total_turns + 1,
-                      updated_at         = now()
-                WHERE id = $4`,
-              [tokensUsed, promptTokensTotal, completionTokensTotal, conversationId],
-            );
-          } catch (err) {
-            request.log.error({ err, tenantId, conversationId }, 'chat: onFinish DB write failed');
-          }
-
-          request.log.info(
-            { tenantId, conversationId, ...llmInfo, tokensUsed, totalSteps: steps?.length ?? 1 },
-            'chat_stream_finish',
-          );
-        },
-      });
-
-      // ── 11. Stream response to client ─────────────────────────────────────
-      const nodeStream = Readable.fromWeb(result.toDataStream({ data: streamData }) as any);
-
-      // Fire-and-forget: use result.steps promise as a backup token tracker.
-      // This resolves after the stream completes and gives accurate usage
-      // even if onFinish has edge cases with NaN values.
-      result.steps.then(async (resolvedSteps) => {
-        const safeN = (v: unknown): number => {
+        // ── 11. Token accounting ────────────────────────────────────────────
+        const safeNum = (v: unknown): number => {
           const n = Number(v);
           return Number.isFinite(n) ? n : 0;
         };
-        let backupPrompt = 0;
-        let backupCompletion = 0;
-        for (const step of resolvedSteps) {
-          backupPrompt += safeN(step.usage?.promptTokens);
-          backupCompletion += safeN(step.usage?.completionTokens);
-        }
-        const backupTokens = backupPrompt + backupCompletion;
-        request.log.info(
-          {
-            tenantId,
-            conversationId,
-            backupTokens,
-            backupPrompt,
-            backupCompletion,
-            stepsCount: resolvedSteps.length,
-            rawStepUsage: resolvedSteps.map((s, i) => ({
-              step: i,
-              prompt: s.usage?.promptTokens,
-              completion: s.usage?.completionTokens,
-            })),
-          },
-          'chat: backup token check via result.steps',
-        );
-        // If onFinish wrote 0 tokens but we got real tokens here, patch the DB
-        if (backupTokens > 0) {
-          try {
-            const [row] = await pgPool.unsafe(
-              `SELECT total_tokens_used FROM "tenant_${safeName}"."conversations" WHERE id = $1`,
-              [conversationId],
-            ) as any[];
-            const currentTokens = row?.total_tokens_used ?? 0;
-            // If the DB still has the value from before this turn (i.e. onFinish wrote 0)
-            if (currentTokens === currentTotalTokens) {
-              await pgPool.unsafe(
-                `UPDATE "tenant_${safeName}"."conversations"
-                    SET total_tokens_used  = total_tokens_used + $1,
-                        prompt_tokens      = prompt_tokens + $2,
-                        completion_tokens  = completion_tokens + $3,
-                        updated_at         = now()
-                  WHERE id = $4`,
-                [backupTokens, backupPrompt, backupCompletion, conversationId],
-              );
-              request.log.info(
-                { tenantId, conversationId, backupTokens, backupPrompt, backupCompletion },
-                'chat: patched token count via backup',
-              );
-            }
-          } catch (err) {
-            request.log.warn({ err }, 'chat: backup token patch failed');
-          }
-        }
-      }).catch((err) => {
-        request.log.warn({ err }, 'chat: result.steps promise rejected');
-      });
 
-      return reply
-        .header('Content-Type',            'text/plain; charset=utf-8')
-        .header('X-Vercel-AI-Data-Stream',  'v1')
-        .header('Cache-Control',            'no-cache, no-transform')
-        .header('X-Conversation-Id',         conversationId)
-        .header('X-LLM-Provider',            llmInfo.provider)
-        .header('X-LLM-Model',               llmInfo.model)
-        .send(nodeStream);
+        let promptTokensTotal = 0;
+        let completionTokensTotal = 0;
+        for (const step of result.steps) {
+          promptTokensTotal += safeNum(step.usage?.promptTokens);
+          completionTokensTotal += safeNum(step.usage?.completionTokens);
+        }
+        if (promptTokensTotal === 0 && completionTokensTotal === 0) {
+          promptTokensTotal = safeNum(result.usage?.promptTokens);
+          completionTokensTotal = safeNum(result.usage?.completionTokens);
+        }
+        const tokensUsed = promptTokensTotal + completionTokensTotal;
+
+        request.log.info(
+          { tenantId, conversationId, tokensUsed, promptTokens: promptTokensTotal, completionTokens: completionTokensTotal, totalSteps: result.steps.length },
+          'chat: token accounting',
+        );
+
+        const newTurns  = currentTurns + 1;
+        const newTokens = currentTotalTokens + tokensUsed;
+
+        // Valkey budget counters — fire-and-forget
+        valkey
+          .pipeline()
+          .hset(budgetKey(tenantId, conversationId), 'turns', String(newTurns), 'tokens', String(newTokens))
+          .expire(budgetKey(tenantId, conversationId), 86_400)
+          .exec()
+          .catch((err) =>
+            request.log.warn({ err }, 'chat: Valkey budget update failed'),
+          );
+
+        // ── 12. Persist assistant message + update conversation ─────────────
+        // IMPORTANT: Include product variant IDs in the stored message so the
+        // LLM can reference them in future turns (e.g. "add X to cart").
+        // Without this, the LLM has no variant IDs when the user asks to add
+        // a product that was shown in a previous turn.
+        const persistedContent: Record<string, unknown> = { type: 'text', text: responseText };
+        if (products.length > 0) {
+          persistedContent.products = products.map((p: any) => ({
+            title: p.title,
+            handle: p.handle,
+            variants: (p.variants ?? []).map((v: any) => ({
+              id: v.id,
+              title: v.title,
+              price: v.price,
+              availableForSale: v.availableForSale,
+            })),
+            priceRange: p.priceRange,
+            availableForSale: p.availableForSale,
+          }));
+        }
+
+        try {
+          await pgPool.unsafe(
+            `INSERT INTO "tenant_${safeName}"."messages"
+               (id, conversation_id, role, content, created_at)
+             VALUES ($1, $2, 'assistant', $3, now())`,
+            [nanoid(), conversationId, JSON.stringify(persistedContent)],
+          );
+
+          await pgPool.unsafe(
+            `UPDATE "tenant_${safeName}"."conversations"
+                SET total_tokens_used  = total_tokens_used + $1,
+                    prompt_tokens      = prompt_tokens + $2,
+                    completion_tokens  = completion_tokens + $3,
+                    total_turns        = total_turns + 1,
+                    updated_at         = now()
+              WHERE id = $4`,
+            [tokensUsed, promptTokensTotal, completionTokensTotal, conversationId],
+          );
+        } catch (err) {
+          request.log.error({ err, tenantId, conversationId }, 'chat: DB write failed');
+        }
+
+        request.log.info(
+          { tenantId, conversationId, ...llmInfo, tokensUsed, totalSteps: result.steps.length },
+          'chat_request_finish',
+        );
+
+        // ── 13. Return consistent JSON response ─────────────────────────────
+        return reply.send({
+          text:           responseText,
+          products,
+          cart,
+          order,
+          conversationId,
+        });
+
+      } catch (err) {
+        request.log.error({ err, tenantId, conversationId }, 'chat: generateText failed');
+        return reply.code(500).send({
+          text:           'Something went wrong. Please try again.',
+          products:       [],
+          cart:           null,
+          order:          null,
+          conversationId,
+        });
+      }
     },
   );
 };
