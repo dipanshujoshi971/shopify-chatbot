@@ -1,0 +1,25 @@
+{% comment %}
+  Manual Embed Snippet — Shopbot AI Chatbot
+
+  For merchants who prefer manual installation over the app embed block,
+  add this snippet to theme.liquid before </body>:
+
+    {% render 'shopbot-embed', api_key: 'pk_live_xxx' %}
+
+  The widget script URL and shop domain are auto-detected.
+{% endcomment %}
+
+{% if api_key != blank %}
+  <script
+    src="{{ widget_url | default: 'https://api.shopbot.ai/widget.iife.js' }}"
+    data-api-key="{{ api_key }}"
+    data-shop-domain="{{ shop.permanent_domain }}"
+    data-title="{{ shop.name }}"
+    data-position="{{ position | default: 'right' }}"
+    {% if accent_color != blank %}
+      data-accent-color="{{ accent_color }}"
+    {% endif %}
+    async
+    defer
+  ></script>
+{% endif %}

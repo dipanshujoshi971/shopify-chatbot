@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1774374781953,
+      "tag": "0000_add_auth_and_webhooks",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1774695267223,
+      "tag": "0001_perpetual_thor_girl",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775286331631,
+      "tag": "0002_damp_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1775545200000,
+      "tag": "0003_enable_pgvector",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1775631600000,
+      "tag": "0004_add_embedding_usage",
+      "breakpoints": true
+    }
+  ]
+}
