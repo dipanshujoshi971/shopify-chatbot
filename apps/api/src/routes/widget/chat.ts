@@ -294,7 +294,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
             );
 
             // Product search results
-            if (tr.toolName === 'search_shop_catalog') {
+            if (tr.toolName === 'search_catalog') {
               const toolResult = tr.result as any;
               const extractedProducts = toolResult?.__shopbot_products ?? [];
               if (extractedProducts.length > 0) {

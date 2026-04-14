@@ -30,10 +30,18 @@ export async function fetchWidgetConfig(
     const res = await fetch(`${apiBaseUrl}/widget/config`, {
       headers: { 'X-Widget-Key': apiKey },
     });
-    if (!res.ok) return DEFAULT_CONFIG;
+    if (!res.ok) {
+      console.warn(`[Shopbot] Config fetch failed: HTTP ${res.status} ${res.statusText}`);
+      try {
+        const errBody = await res.text();
+        console.warn(`[Shopbot] Config response:`, errBody.slice(0, 300));
+      } catch { /* ignore */ }
+      return DEFAULT_CONFIG;
+    }
     const data = await res.json() as RemoteConfig;
     return { ...DEFAULT_CONFIG, ...data };
-  } catch {
+  } catch (err) {
+    console.warn('[Shopbot] Config fetch error (falling back to defaults):', err);
     return DEFAULT_CONFIG;
   }
 }

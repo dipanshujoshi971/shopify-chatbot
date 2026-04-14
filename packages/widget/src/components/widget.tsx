@@ -16,6 +16,7 @@ import type {
   WidgetConfig, ChatMessage, ConsentStatus,
   RemoteConfig, PageContext, ChatApiResponse,
 } from '../types.js';
+import type { SendMessageOptions } from './ProductCarousel.js';
 import { sendChatMessage, newConversationId, getOrCreateSessionId } from '../api/stream.js';
 import { fetchWidgetConfig } from '../api/config.js';
 import { getConsentStatus, requestConsent, onConsentChange } from '../consent/shopify.js';
@@ -165,8 +166,11 @@ function MessageText({ text, isUser }: { text: string; isUser: boolean }) {
 
 // ── Message bubble ─────────────────────────────────────────────────
 
-function MessageBubble({ msg, onSendMessage }: { msg: ChatMessage; onSendMessage?: (text: string) => void }) {
+function MessageBubble({ msg, onSendMessage }: { msg: ChatMessage; onSendMessage?: (text: string, opts?: SendMessageOptions) => void }) {
   const isUser = msg.role === 'user';
+
+  // Hidden user messages (e.g. add-to-cart actions) are not rendered
+  if (isUser && msg.hidden) return null;
 
   const hasContent = !!msg.content?.trim();
   const hasCart = !isUser && msg.cart != null;
@@ -175,9 +179,11 @@ function MessageBubble({ msg, onSendMessage }: { msg: ChatMessage; onSendMessage
   // an intermediate step (e.g. searching to get variant ID for add-to-cart).
   const hasProducts = !isUser && msg.products && msg.products.length > 0 && !hasCart && !hasOrder;
 
-  // Hide text when rich content (products/cart/order) is the primary result —
-  // the UI cards are self-explanatory and text just adds clutter.
-  const showTextBubble = hasContent && !hasProducts && !hasCart && !hasOrder;
+  // Always show text if the LLM provided it — it often contains important
+  // context like support ticket confirmations, checkout links, follow-up
+  // questions, etc.  Only hide text for product-only responses where the
+  // carousel is self-explanatory.
+  const showTextBubble = hasContent && !hasProducts;
 
   return (
     <div class={`sb-msg sb-msg-${msg.role}`}>
@@ -193,11 +199,11 @@ function MessageBubble({ msg, onSendMessage }: { msg: ChatMessage; onSendMessage
             {...(onSendMessage ? { onSendMessage } : {})}
           />
         )}
-        {hasOrder && (
-          <OrderCard data={msg.order!} />
-        )}
         {hasCart && (
           <CartCard data={msg.cart!} />
+        )}
+        {hasOrder && (
+          <OrderCard data={msg.order!} />
         )}
         <span class="sb-msg-time">{formatTime(msg.timestamp)}</span>
       </div>
@@ -374,19 +380,23 @@ export function Widget({ config }: WidgetProps) {
   }, []);
 
   // Send message
-  const sendMessage = useCallback(async (overrideText?: string) => {
+  const sendMessage = useCallback(async (overrideText?: string, opts?: SendMessageOptions) => {
     const text = (overrideText ?? input).trim();
     if (!text || loading) return;
 
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    // Add user message
-    const userMsg: ChatMessage = { id: uid(), role: 'user', content: text, timestamp: Date.now() };
+    // Add user message (hidden for internal actions like add-to-cart)
+    const userMsg: ChatMessage = {
+      id: uid(), role: 'user', content: text, timestamp: Date.now(),
+      ...(opts?.hidden ? { hidden: true } : {}),
+    };
     // Add a loading placeholder for the assistant
     const assistantId = uid();
     const loadingMsg: ChatMessage = {
       id: assistantId, role: 'assistant', content: '', timestamp: Date.now(), loading: true,
+      ...(opts?.loadingLabel ? { loadingLabel: opts.loadingLabel } : {}),
     };
 
     setMessages((prev) => [...prev, userMsg, loadingMsg]);
@@ -575,11 +585,17 @@ export function Widget({ config }: WidgetProps) {
                     return <MessageBubble key={msg.id} msg={msg} onSendMessage={sendMessage} />;
                   })
                 )}
-                {loading && (
-                  <div class="sb-typing" aria-label="Assistant is typing">
-                    <span /><span /><span />
-                  </div>
-                )}
+                {loading && (() => {
+                  // Find the loading message to check for a custom label
+                  const loadingMsg = messages.find((m) => m.loading);
+                  const label = loadingMsg?.loadingLabel;
+                  return (
+                    <div class="sb-typing" aria-label={label ?? 'Assistant is typing'}>
+                      {label && <span class="sb-typing-label">{label}</span>}
+                      <span /><span /><span />
+                    </div>
+                  );
+                })()}
                 <div ref={messagesEndRef} />
               </div>
 

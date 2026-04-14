@@ -79,7 +79,7 @@ export type AnnotationEvent =
 
 export interface ProductResultAnnotation {
   type      : 'tool_result';
-  toolName  : 'search_shop_catalog';
+  toolName  : 'search_catalog';
   toolCallId: string;
   result    : ProductSearchResult;
 }
@@ -191,7 +191,7 @@ export interface ChatMessage {
   id        : string;
   role      : MessageRole;
   content   : string;
-  /** Products from search_shop_catalog (empty array if none) */
+  /** Products from search_catalog (empty array if none) */
   products  ?: ShopifyProduct[] | undefined;
   /** Cart data from get_cart / update_cart */
   cart      ?: CartResult | null | undefined;
@@ -200,6 +200,10 @@ export interface ChatMessage {
   timestamp : number;
   /** True while waiting for the API response */
   loading   ?: boolean;
+  /** If true, user message is hidden (used for internal actions like add-to-cart) */
+  hidden    ?: boolean;
+  /** Friendly label shown during loading instead of content (e.g. "Adding to cart...") */
+  loadingLabel ?: string;
 }
 
 // ------------------------------------------------------------------ //

@@ -12,9 +12,16 @@
 import { useRef, useCallback, useState } from 'preact/hooks';
 import type { ProductSearchResult, ShopifyProduct, ProductVariant } from '../types.js';
 
+export interface SendMessageOptions {
+  /** Hide the user message bubble (used for internal actions like add-to-cart) */
+  hidden?: boolean;
+  /** Friendly label shown during loading (e.g. "Adding to cart...") */
+  loadingLabel?: string;
+}
+
 interface ProductCarouselProps {
   data: ProductSearchResult;
-  onSendMessage?: (text: string) => void;
+  onSendMessage?: (text: string, opts?: SendMessageOptions) => void;
 }
 
 function formatPrice(amount: string, currencyCode: string): string {
@@ -47,7 +54,7 @@ function AddToCartPanel({
   onClose,
 }: {
   product: ShopifyProduct;
-  onSendMessage?: (text: string) => void;
+  onSendMessage?: (text: string, opts?: SendMessageOptions) => void;
   onClose: () => void;
 }) {
   const variants = product.variants ?? [];
@@ -63,7 +70,16 @@ function AddToCartPanel({
     const variantLabel = selectedVariant && selectedVariant.title !== 'Default Title'
       ? ` (${selectedVariant.title})`
       : '';
-    onSendMessage(`Add ${quantity} of ${product.title}${variantLabel} to cart`);
+    // Include variant GID so the LLM can call update_cart directly
+    // without needing to re-search the catalog for the variant ID.
+    const variantGid = selectedVariant?.id
+      ?? (variants.length === 1 ? variants[0].id : undefined);
+    const variantHint = variantGid ? ` [variant_id: ${variantGid}]` : '';
+    const displayName = `${product.title}${variantLabel}`;
+    onSendMessage(
+      `Add ${quantity} of ${displayName} to cart${variantHint}`,
+      { hidden: true, loadingLabel: `Adding ${displayName} to cart…` },
+    );
     onClose();
   };
 
@@ -197,7 +213,7 @@ function ProductCard({
   onSendMessage,
 }: {
   product: ShopifyProduct;
-  onSendMessage?: (text: string) => void;
+  onSendMessage?: (text: string, opts?: SendMessageOptions) => void;
 }) {
   const [activePanel, setActivePanel] = useState<'cart' | 'details' | null>(null);
   const price = product.priceRange.minVariantPrice;

@@ -456,7 +456,7 @@ export const WIDGET_CSS = /* css */ `
     margin-left: 42px;
     box-shadow: 0 1px 4px rgba(0,0,0,.04);
   }
-  .sb-typing span {
+  .sb-typing span:not(.sb-typing-label) {
     width: 7px;
     height: 7px;
     border-radius: 50%;
@@ -464,8 +464,15 @@ export const WIDGET_CSS = /* css */ `
     opacity: .5;
     animation: sb-bounce .9s infinite;
   }
-  .sb-typing span:nth-child(2) { animation-delay: .15s; }
-  .sb-typing span:nth-child(3) { animation-delay: .3s; }
+  .sb-typing span:not(.sb-typing-label):nth-last-child(2) { animation-delay: .15s; }
+  .sb-typing span:not(.sb-typing-label):last-child { animation-delay: .3s; }
+  .sb-typing-label {
+    font-size: 12px;
+    color: var(--sb-text-muted);
+    font-weight: 500;
+    margin-right: 2px;
+    white-space: nowrap;
+  }
 
   /* ── Consent banner ────────────────────────────────────────────── */
   .sb-consent-banner {

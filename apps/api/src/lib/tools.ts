@@ -200,6 +200,7 @@ export function createAdminTools(ctx: AdminToolContext) {
       }),
       execute: async ({ order_identifier, customer_email }) => {
         if (!ctx.encryptedShopifyToken) {
+          console.warn(`[get_order_status] No Shopify token for tenant ${ctx.tenantId} — order lookup not configured`);
           return { found: false, message: 'Order lookup is not configured for this store.' };
         }
 
@@ -207,6 +208,8 @@ export function createAdminTools(ctx: AdminToolContext) {
           const accessToken = decryptToken(ctx.encryptedShopifyToken);
           const orderNumber = order_identifier.replace(/^#/, '').trim();
           const orderName   = `#${orderNumber}`;  // Shopify stores as "#1033"
+
+          console.log(`[get_order_status] Looking up order ${orderName} for ${customer_email} on ${ctx.shopDomain}`);
 
           // ── Step 1: Search all orders by customer email ──────────────────
           const emailData = await shopifyGraphQL(
@@ -217,6 +220,7 @@ export function createAdminTools(ctx: AdminToolContext) {
           );
 
           const emailOrders = emailData?.orders?.edges ?? [];
+          console.log(`[get_order_status] Step 1: found ${emailOrders.length} orders for email ${customer_email}`);
 
           if (emailOrders.length === 0) {
             return {
@@ -233,6 +237,7 @@ export function createAdminTools(ctx: AdminToolContext) {
           if (!matchingOrder) {
             // The email has orders, but not this specific order number
             const orderNames = emailOrders.map((e: any) => e.node.name).join(', ');
+            console.log(`[get_order_status] Step 2: order ${orderName} not found among [${orderNames}]`);
             return {
               found: false,
               message:
@@ -306,6 +311,7 @@ export function createAdminTools(ctx: AdminToolContext) {
             },
           };
         } catch (err) {
+          console.error(`[get_order_status] Error for ${ctx.shopDomain}:`, (err as Error)?.message ?? err);
           return { found: false, message: `Unable to look up that order right now. ${(err as Error)?.message ?? ''}` };
         }
       },
@@ -354,7 +360,7 @@ export function createAdminTools(ctx: AdminToolContext) {
         'Use when the question is about store policies, shipping details, ' +
         'return procedures, warranty info, sizing guides, or any topic ' +
         'likely covered by merchant-uploaded documents. ' +
-        'Do NOT use for product search (use search_shop_catalog) or ' +
+        'Do NOT use for product search (use search_catalog) or ' +
         'order status (use get_order_status).',
       parameters: z.object({
         query: z.string().describe('The customer question to search for in the knowledge base'),
