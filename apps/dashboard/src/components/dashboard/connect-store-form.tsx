@@ -62,7 +62,7 @@ export function ConnectStoreForm() {
           </div>
           <h1 className="text-2xl font-bold text-foreground tracking-tight">Connect Your Store</h1>
           <p className="text-sm text-muted-foreground mt-2 max-w-sm mx-auto leading-relaxed">
-            Enter your Shopify store domain to link it to your ShopChat account
+            Enter your Shopify store domain to link it to your {process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'} account
           </p>
         </div>
 

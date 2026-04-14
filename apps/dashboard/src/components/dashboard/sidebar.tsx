@@ -200,7 +200,7 @@ export function Sidebar({ shopDomain, planId, userName, userImageUrl, isAdmin, c
               </p>
             )}
             <p className="text-sm font-bold text-sidebar-accent-foreground tracking-tight truncate">
-              {userName || 'ShopChat'}
+              {userName || process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'}
             </p>
           </div>
         )}
@@ -305,7 +305,7 @@ export function MobileNav({ shopDomain }: { shopDomain?: string }) {
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center">
             <Sparkles className="w-3.5 h-3.5 text-white" />
           </div>
-          <span className="text-sm font-bold text-foreground">ShopChat</span>
+          <span className="text-sm font-bold text-foreground">{process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'}</span>
         </div>
         <button
           onClick={() => setOpen(!open)}
@@ -324,7 +324,7 @@ export function MobileNav({ shopDomain }: { shopDomain?: string }) {
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center">
                   <Sparkles className="w-4 h-4 text-white" />
                 </div>
-                <span className="text-sm font-bold text-sidebar-accent-foreground">ShopChat</span>
+                <span className="text-sm font-bold text-sidebar-accent-foreground">{process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'}</span>
               </div>
               <button
                 onClick={() => setOpen(false)}

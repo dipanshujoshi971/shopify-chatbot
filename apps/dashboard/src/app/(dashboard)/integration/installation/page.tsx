@@ -62,7 +62,7 @@ export default function InstallationPage() {
       {/* Page intro */}
       <div>
         <h2 className="text-xl font-bold text-foreground">Install Your Chatbot</h2>
-        <p className="text-sm text-muted-foreground mt-1">Follow these steps to add ShopChat to your Shopify store</p>
+        <p className="text-sm text-muted-foreground mt-1">Follow these steps to add {process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'} to your Shopify store</p>
       </div>
 
       {/* Missing env warning */}

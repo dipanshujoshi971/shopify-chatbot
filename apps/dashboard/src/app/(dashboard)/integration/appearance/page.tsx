@@ -48,7 +48,7 @@ export default function AppearancePage() {
   const [widgetMode, setWidgetMode] = useState<'light' | 'dark'>('light');
   const [preview, setPreview] = useState<'desktop' | 'mobile'>('desktop');
   const [greeting, setGreeting] = useState('Hi there! How can I help you today?');
-  const [botName, setBotName] = useState('ShopChat');
+  const [botName, setBotName] = useState(process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat');
   const [tone, setTone] = useState('friendly');
   const [useEmojis, setUseEmojis] = useState(false);
   const [customInstructions, setCustomInstructions] = useState('');
@@ -61,7 +61,7 @@ export default function AppearancePage() {
       .then((r) => r.json())
       .then((data) => {
         if (data.config) {
-          setBotName(data.config.botName ?? 'ShopChat');
+          setBotName(data.config.botName ?? process.env.NEXT_PUBLIC_APP_NAME ?? 'ShopChat');
           setTone(data.config.tone ?? 'friendly');
           setUseEmojis(data.config.useEmojis ?? false);
           setCustomInstructions(data.config.customInstructions ?? '');

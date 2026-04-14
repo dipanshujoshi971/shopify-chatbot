@@ -12,7 +12,7 @@ const inter = Inter({
 });
 
 export const metadata = {
-  title: 'ShopChat Dashboard',
+  title: `${process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'} Dashboard`,
   description: 'AI-powered chatbot dashboard for Shopify stores',
 };
 
