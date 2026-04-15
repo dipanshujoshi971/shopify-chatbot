@@ -3,7 +3,9 @@
     "allow": [
       "Bash(npx tsc:*)",
       "Bash(ls apps/dashboard/.env*)",
-      "Bash(grep -E \"\\\\.\\(yml|yaml|md\\)$\")"
+      "Bash(grep -E \"\\\\.\\(yml|yaml|md\\)$\")",
+      "Bash(mkdir -p \"C:/Users/user/Documents/Shopify/shopify-chatbot/apps/dashboard/src/app/\\(dashboard\\)/dashboard\")",
+      "Bash(mkdir -p \"C:/Users/user/Documents/Shopify/shopify-chatbot/apps/dashboard/src/app/\\(marketing\\)\")"
     ]
   }
 }

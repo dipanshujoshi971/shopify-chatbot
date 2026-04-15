@@ -12,7 +12,7 @@ export default async function AdminLayout({
   const [adminId, user] = await Promise.all([getSuperAdmin(), currentUser()]);
 
   if (!adminId) {
-    redirect('/');
+    redirect('/dashboard');
   }
 
   return (

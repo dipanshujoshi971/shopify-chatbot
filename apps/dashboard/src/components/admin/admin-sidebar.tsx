@@ -138,7 +138,7 @@ export function AdminSidebar({ userName, userImageUrl }: { userName?: string; us
         {/* Back to merchant dashboard */}
         <div className="mt-4 pt-4 border-t border-sidebar-border">
           <Link
-            href="/"
+            href="/dashboard"
             title={collapsed ? 'Back to Dashboard' : undefined}
             className={cn(
               'flex items-center gap-3 rounded-xl text-[13px] font-medium transition-all duration-200 text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50',
@@ -220,7 +220,7 @@ export function AdminMobileNav() {
               </div>
               <div className="mt-4 pt-4 border-t border-sidebar-border" onClick={() => setOpen(false)}>
                 <Link
-                  href="/"
+                  href="/dashboard"
                   className="flex items-center gap-3 rounded-xl text-[13px] font-medium px-3 py-2.5 text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50"
                 >
                   <ArrowLeft className="w-[18px] h-[18px]" />

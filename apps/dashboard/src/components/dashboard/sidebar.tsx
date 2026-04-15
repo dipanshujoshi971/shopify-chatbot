@@ -53,7 +53,7 @@ const sections: Section[] = [
   {
     label: 'MAIN',
     items: [
-      { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/inbox', label: 'Inbox', icon: Inbox },
     ],
   },
