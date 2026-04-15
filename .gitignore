@@ -6,3 +6,8 @@ dist
 .env.local
 .env.*.local
 *.log
+
+# Shopify CLI config — contains client IDs / app URLs, deploy from laptop only
+shopify.app.toml
+shopify.app.*.toml
+.shopify/

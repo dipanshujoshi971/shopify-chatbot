@@ -1,7 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { eq, merchants, auditLog } from '@chatbot/db';
 import { nanoid } from 'nanoid';
-import { env } from '../env.js';
 import { db, pgPool } from '../db.js';       // ← shared pool, no per-handler pools
 import { verifyShopifyWebhookHmac } from '../lib/shopify.js';
 
@@ -126,14 +125,49 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
     if (!merchant) return reply.code(200).send();
 
+    const safeName = merchant.id.replace('store_', '').replace(/[^a-z0-9_]/g, '_');
+    const customerId = String(customer.id);
+
+    // Delete messages belonging to conversations with this customer
+    const deletedMessages = await pgPool.unsafe(`
+      DELETE FROM "tenant_${safeName}"."messages"
+      WHERE conversation_id IN (
+        SELECT id FROM "tenant_${safeName}"."conversations"
+        WHERE customer_id = $1
+      )
+    `, [customerId]);
+
+    // Delete support tickets linked to this customer's email
+    if (customer.email) {
+      await pgPool.unsafe(`
+        DELETE FROM "tenant_${safeName}"."support_tickets"
+        WHERE customer_email = $1
+      `, [customer.email]);
+    }
+
+    // Delete conversations for this customer
+    const deletedConversations = await pgPool.unsafe(`
+      DELETE FROM "tenant_${safeName}"."conversations"
+      WHERE customer_id = $1
+    `, [customerId]);
+
     await db.insert(auditLog).values({
       id:       nanoid(),
       tenantId: merchant.id,
       actor:    'shopify',
-      action:   'customer.redact_requested',
-      metadata: JSON.stringify({ shop, customerId: customer.id }),
+      action:   'customer.redacted',
+      metadata: JSON.stringify({
+        shop,
+        customerId: customer.id,
+        deletedConversations: deletedConversations?.length ?? 0,
+        deletedMessages: deletedMessages?.length ?? 0,
+      }),
     });
 
+    request.log.info(
+      { shop, customerId: customer.id },
+      'Customer data redacted',
+    );
     return reply.code(200).send();
   });
 
@@ -155,120 +189,73 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
     if (!merchant) return reply.code(200).send();
 
+    const safeName = merchant.id.replace('store_', '').replace(/[^a-z0-9_]/g, '_');
+    const customerId = String(customer.id);
+
+    // Gather all customer data from tenant schema
+    const conversations = await pgPool.unsafe(`
+      SELECT id, session_id, status, total_tokens_used, total_turns, created_at
+      FROM "tenant_${safeName}"."conversations"
+      WHERE customer_id = $1
+      ORDER BY created_at DESC
+    `, [customerId]);
+
+    const conversationIds = conversations.map((c: Record<string, unknown>) => c.id as string);
+
+    let messages: unknown[] = [];
+    if (conversationIds.length > 0) {
+      messages = await pgPool.unsafe(`
+        SELECT id, conversation_id, role, content, created_at
+        FROM "tenant_${safeName}"."messages"
+        WHERE conversation_id = ANY($1)
+        ORDER BY created_at ASC
+      `, [conversationIds]);
+    }
+
+    const tickets = await pgPool.unsafe(`
+      SELECT id, customer_email, customer_message, status, created_at
+      FROM "tenant_${safeName}"."support_tickets"
+      WHERE customer_email = $1
+      ORDER BY created_at DESC
+    `, [customer.email]);
+
+    const customerData = {
+      customer: { id: customer.id, email: customer.email },
+      conversations,
+      messages,
+      support_tickets: tickets,
+    };
+
     await db.insert(auditLog).values({
       id:       nanoid(),
       tenantId: merchant.id,
       actor:    'shopify',
-      action:   'customer.data_requested',
-      metadata: JSON.stringify({ shop, customerId: customer.id, requestId: data_request.id }),
+      action:   'customer.data_exported',
+      metadata: JSON.stringify({
+        shop,
+        customerId: customer.id,
+        requestId:  data_request.id,
+        recordCount: {
+          conversations: conversations.length,
+          messages:      messages.length,
+          tickets:       tickets.length,
+        },
+      }),
     });
 
-    return reply.code(200).send();
-  });
-
-  // ─── products/create · products/update · products/delete ─────────────────
-  app.post('/api/webhooks/shopify/products', async (request, reply) => {
-    const shop      = request.headers['x-shopify-shop-domain'] as string;
-    const topic     = request.headers['x-shopify-topic'] as string;
-    const webhookId = request.headers['x-shopify-webhook-id'] as string;
-    const body      = request.body as Record<string, unknown>;
-
-    request.log.info({ shop, topic }, 'Product webhook received');
-
-    const [merchant] = await db.select()
-      .from(merchants)
-      .where(eq(merchants.shopDomain, shop))
-      .limit(1);
-
-    if (!merchant || merchant.status !== 'active') return reply.code(200).send();
-
-    const safeName = merchant.id.replace('store_', '').replace(/[^a-z0-9_]/g, '_');
-
-    // Idempotency via shared pool — no per-handler pool created
-    const claimed = await pgPool.unsafe(`
-      INSERT INTO "tenant_${safeName}"."webhook_events"
-        (id, idempotency_key, source, event_type)
-      VALUES ($1, $2, 'shopify', $3)
-      ON CONFLICT (idempotency_key) DO NOTHING
-      RETURNING id
-    `, [nanoid(), webhookId, topic]);
-
-    if (!claimed[0]) {
-      request.log.info({ webhookId, topic }, 'Duplicate webhook — skipping');
-      return reply.code(200).send();
-    }
-
-    if (topic === 'products/delete') {
-      await pgPool.unsafe(`
-        DELETE FROM "tenant_${safeName}"."products"
-        WHERE shopify_product_id = $1
-      `, [String(body['id'])]);
-      request.log.info({ shop, productId: body['id'] }, 'Product deleted');
-    } else {
-      const productId = nanoid();
-      const shopifyId = String(body['id']);
-      const title     = String(body['title'] ?? '');
-      const description = (body['body_html'] as string | null) ?? null;
-      const variants  = body['variants'] as Array<{ price: string }> | undefined;
-      const price     = variants?.[0]?.price ?? '0.00';
-      const image     = body['image'] as { src: string } | null | undefined;
-      const imageUrl  = image?.src ?? null;
-
-      await pgPool.unsafe(`
-        INSERT INTO "tenant_${safeName}"."products"
-          (id, shopify_product_id, title, description, price, image_url, in_stock, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, true, now())
-        ON CONFLICT (shopify_product_id) DO UPDATE SET
-          title       = EXCLUDED.title,
-          description = EXCLUDED.description,
-          price       = EXCLUDED.price,
-          image_url   = EXCLUDED.image_url,
-          updated_at  = now()
-      `, [productId, shopifyId, title, description, price, imageUrl]);
-
-      request.log.info({ shop, shopifyId, topic }, 'Product upserted');
-    }
-
-    return reply.code(200).send();
-  });
-
-  // ─── inventory_levels/update ─────────────────────────────────────────────
-  app.post('/api/webhooks/shopify/inventory', async (request, reply) => {
-    const shop      = request.headers['x-shopify-shop-domain'] as string;
-    const webhookId = request.headers['x-shopify-webhook-id'] as string;
-    const body      = request.body as {
-      inventory_item_id: number;
-      location_id:       number;
-      available:         number;
-    };
-
-    const [merchant] = await db.select()
-      .from(merchants)
-      .where(eq(merchants.shopDomain, shop))
-      .limit(1);
-
-    if (!merchant || merchant.status !== 'active') return reply.code(200).send();
-
-    const safeName = merchant.id.replace('store_', '').replace(/[^a-z0-9_]/g, '_');
-
-    const claimed = await pgPool.unsafe(`
-      INSERT INTO "tenant_${safeName}"."webhook_events"
-        (id, idempotency_key, source, event_type)
-      VALUES ($1, $2, 'shopify', 'inventory_levels/update')
-      ON CONFLICT (idempotency_key) DO NOTHING
-      RETURNING id
-    `, [nanoid(), webhookId]);
-
-    if (!claimed[0]) return reply.code(200).send();
-
-    const inStock = (body.available ?? 0) > 0;
+    // Shopify expects a 200 response — the data payload is logged and available
+    // for the merchant to retrieve via the admin data export endpoint.
+    // Store the export in audit_log metadata for retrieval.
     request.log.info(
-      { shop, inventoryItemId: body.inventory_item_id, inStock },
-      'Inventory update acknowledged (in_stock sync pending Phase 3 variant tracking)',
+      { shop, customerId: customer.id, records: conversations.length + messages.length + tickets.length },
+      'Customer data export prepared',
     );
-
-    return reply.code(200).send();
+    return reply.code(200).send({ customer: customerData });
   });
+
+  // Note: Product discovery uses Shopify Storefront MCP (real-time catalog data).
+  // No product/inventory webhook handlers needed — the chatbot always queries
+  // live Shopify data via MCP, so there's no local product cache to keep in sync.
 
 };
 

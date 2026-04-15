@@ -117,12 +117,8 @@ export async function registerWebhooks(
   const subscriptions = [
     // Mandatory — fires when merchant uninstalls the app
     { topic: 'APP_UNINSTALLED', url: `${appUrl}/api/webhooks/shopify/app-uninstalled` },
-    // Product sync — keeps RAG embeddings fresh
-    { topic: 'PRODUCTS_CREATE', url: `${appUrl}/api/webhooks/shopify/products` },
-    { topic: 'PRODUCTS_UPDATE', url: `${appUrl}/api/webhooks/shopify/products` },
-    { topic: 'PRODUCTS_DELETE', url: `${appUrl}/api/webhooks/shopify/products` },
-    // Inventory — agent won't recommend out-of-stock items
-    { topic: 'INVENTORY_LEVELS_UPDATE', url: `${appUrl}/api/webhooks/shopify/inventory` },
+    // Note: Product discovery uses Shopify Storefront MCP (live data).
+    // No product/inventory webhooks needed — MCP queries real-time catalog.
   ];
 
   const mutation = `

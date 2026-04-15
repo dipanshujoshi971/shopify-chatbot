@@ -1,5 +1,5 @@
 {% comment %}
-  Shopify App Embed Block — Shopbot AI Chatbot
+  Shopify App Embed Block — ShopChat AI Chatbot
 
   This block is registered as a theme app extension (app embed).
   Merchants toggle it on/off from:
@@ -15,6 +15,9 @@
     data-shop-domain="{{ shop.permanent_domain }}"
     data-title="{{ shop.name }}"
     data-position="{{ block.settings.position | default: 'right' }}"
+    {% if block.settings.api_url != blank %}
+      data-api-url="{{ block.settings.api_url }}"
+    {% endif %}
     {% if block.settings.accent_color != blank %}
       data-accent-color="{{ block.settings.accent_color }}"
     {% endif %}
@@ -25,10 +28,8 @@
 
 {% schema %}
 {
-  "name": "Shopbot AI Chat",
+  "name": "ShopChat AI",
   "target": "body",
-  "javascript": "",
-  "stylesheet": "",
   "settings": [
     {
       "type": "checkbox",
@@ -41,7 +42,13 @@
       "type": "text",
       "id": "api_key",
       "label": "API Key",
-      "info": "Your publishable API key (starts with pk_live_ or pk_test_). Find this in your Shopbot dashboard under Settings."
+      "info": "Your publishable API key (starts with pk_). Find this in your ShopChat dashboard under Settings."
+    },
+    {
+      "type": "text",
+      "id": "api_url",
+      "label": "API Server URL",
+      "info": "Your API server URL (e.g. https://api.yourapp.com). Leave blank to auto-detect from widget script URL."
     },
     {
       "type": "text",
