@@ -21,7 +21,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Resolve to the monorepo widget dist
 // In production this would be: /app/packages/widget/dist/widget.iife.js
 // In dev: ../../packages/widget/dist/widget.iife.js (relative to apps/api/src/routes/widget/)
-const WIDGET_PATH = resolve(__dirname, '../../../../packages/widget/dist/widget.iife.js');
+const WIDGET_PATH = resolve(__dirname, '../../../../../packages/widget/dist/widget.iife.js');
 
 let cachedBundle: { content: Buffer; etag: string; mtime: number } | null = null;
 
