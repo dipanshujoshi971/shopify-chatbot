@@ -74,6 +74,7 @@ export function registerWidgetServing(app: any) {
       .header('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400')
       .header('ETag', `"${bundle.etag}"`)
       .header('Access-Control-Allow-Origin', '*')
+      .header('Cross-Origin-Resource-Policy', 'cross-origin')
       .header('X-Content-Type-Options', 'nosniff')
       .send(bundle.content);
   });
