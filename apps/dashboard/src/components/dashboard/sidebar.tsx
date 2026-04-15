@@ -167,7 +167,7 @@ export function Sidebar({ shopDomain, planId, userName, userImageUrl, isAdmin, c
   return (
     <aside
       className={cn(
-        'hidden lg:flex flex-col min-h-screen glass-sidebar fixed left-0 top-0 z-30 transition-all duration-300',
+        'hidden lg:flex flex-col h-screen glass-sidebar fixed left-0 top-0 z-30 transition-all duration-300',
         collapsed ? 'w-[72px]' : 'w-[260px]',
       )}
     >
