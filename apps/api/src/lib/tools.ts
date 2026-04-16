@@ -163,6 +163,7 @@ const ORDER_DETAILS_QUERY = `
 const openai = new AzureOpenAI({
   apiKey: env.AZURE_API_KEY,
   endpoint: `https://${env.AZURE_RESOURCE_NAME}.openai.azure.com`,
+  apiVersion: '2024-10-21',
 });
 const EMBED_MODEL = 'text-embedding-3-small';
 

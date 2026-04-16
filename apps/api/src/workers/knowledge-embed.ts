@@ -36,6 +36,7 @@ const BACKOFF_DELAYS = [1_000, 5_000, 30_000];
 const openai = new AzureOpenAI({
   apiKey: env.AZURE_API_KEY,
   endpoint: `https://${env.AZURE_RESOURCE_NAME}.openai.azure.com`,
+  apiVersion: '2024-10-21',
 });
 const enc = encoding_for_model('gpt-4o'); // cl100k_base encoding
 
