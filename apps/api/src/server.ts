@@ -13,6 +13,7 @@ import widgetConfigRoutes from './routes/widget/config.js';
 import { registerWidgetServing } from './routes/widget/serve.js';
 import dashboardAuthPlugin from './plugins/dashboardAuth.js';
 import knowledgeRoutes from './routes/dashboard/knowledge.js';
+import resolveKeyRoute from './routes/widget/resolveKey.js';
 
 const app = Fastify({
   loggerInstance: logger,
@@ -98,7 +99,8 @@ await app.register(
   { prefix: '/dashboard' },
 );
 
-// ─── Widget bundle serving (public, no auth) ─────────────────────────────
+// ─── Public widget endpoints (no auth) ───────────────────────────────────
+await app.register(resolveKeyRoute);
 registerWidgetServing(app);
 
 // ─── Health Routes ────────────────────────────────────────────────────────────

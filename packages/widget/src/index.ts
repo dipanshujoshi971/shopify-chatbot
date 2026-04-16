@@ -7,7 +7,6 @@
  *
  *   <script
  *     src="https://cdn.yourapp.com/widget.iife.js"
- *     data-api-key="pk_live_xxx"
  *     data-shop-domain="{{ shop.permanent_domain }}"
  *     data-title="{{ shop.name }}"
  *     data-position="right"
@@ -16,11 +15,12 @@
  *
  * The widget:
  *   1. Reads config from the script tag's data-* attributes
- *   2. Creates a <shopbot-widget> custom element with Shadow DOM
+ *   2. Auto-resolves the API key from the server if not provided
+ *   3. Creates a <shopbot-widget> custom element with Shadow DOM
  *      (full CSS isolation — zero risk of storefront style conflicts)
- *   3. Injects styles into the shadow root
- *   4. Mounts the Preact <Widget> component
- *   5. Handles Shopify Consent API automatically
+ *   4. Injects styles into the shadow root
+ *   5. Mounts the Preact <Widget> component
+ *   6. Handles Shopify Consent API automatically
  *
  * Idempotent: calling multiple times is safe (duplicate detection).
  */
@@ -46,26 +46,22 @@ if ((window as any)[INIT_FLAG]) {
 // Read config from <script> data-* attributes
 // ------------------------------------------------------------------ //
 
-function readConfig(): WidgetConfig | null {
-  // Find the current script tag
+function readConfig(): { config: WidgetConfig; needsKeyResolve: boolean } | null {
+  // Find the current script tag — look for data-shop-domain (always present)
   const scripts = document.querySelectorAll<HTMLScriptElement>(
-    'script[data-api-key]',
+    'script[data-shop-domain]',
   );
 
   if (scripts.length === 0) {
-    console.warn('[shopbot] No script tag with data-api-key found.');
+    console.warn('[shopbot] No script tag with data-shop-domain found.');
     return null;
   }
 
   const script = scripts[scripts.length - 1]; // use last one if multiple
 
-  const apiKey    = script.dataset.apiKey?.trim();
+  const apiKey     = script.dataset.apiKey?.trim() || '';
   const shopDomain = script.dataset.shopDomain?.trim();
 
-  if (!apiKey) {
-    console.error('[shopbot] data-api-key is required.');
-    return null;
-  }
   if (!shopDomain) {
     console.error('[shopbot] data-shop-domain is required.');
     return null;
@@ -85,14 +81,39 @@ function readConfig(): WidgetConfig | null {
   const title = script.dataset.title?.trim() ?? shopDomain;
   const accentColor = script.dataset.accentColor?.trim();
   const position = script.dataset.position === 'left' ? 'left' : 'right';
+
   return {
-    apiKey,
-    shopDomain,
-    apiBaseUrl,
-    title,
-    ...(accentColor && { accentColor }), // Only includes accentColor if it exists
-    position,
+    config: {
+      apiKey,
+      shopDomain,
+      apiBaseUrl,
+      title,
+      ...(accentColor && { accentColor }),
+      position,
+    },
+    needsKeyResolve: !apiKey,
   };
+}
+
+// ------------------------------------------------------------------ //
+// Auto-resolve API key from server
+// ------------------------------------------------------------------ //
+
+async function resolveApiKey(apiBaseUrl: string, shopDomain: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${apiBaseUrl}/widget/resolve-key?shop=${encodeURIComponent(shopDomain)}`,
+    );
+    if (!res.ok) {
+      console.error(`[shopbot] Failed to resolve API key: HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json() as { apiKey?: string };
+    return data.apiKey || null;
+  } catch (err) {
+    console.error('[shopbot] Failed to resolve API key:', err);
+    return null;
+  }
 }
 
 // ------------------------------------------------------------------ //
@@ -133,14 +154,26 @@ function mount(config: WidgetConfig): void {
 // Bootstrap — wait for DOM then initialize
 // ------------------------------------------------------------------ //
 
-function init(): void {
-  const config = readConfig();
-  if (!config) return;
+async function init(): Promise<void> {
+  const result = readConfig();
+  if (!result) return;
+
+  const { config, needsKeyResolve } = result;
+
+  if (needsKeyResolve) {
+    const resolvedKey = await resolveApiKey(config.apiBaseUrl, config.shopDomain);
+    if (!resolvedKey) {
+      console.error('[shopbot] Could not resolve API key for shop:', config.shopDomain);
+      return;
+    }
+    config.apiKey = resolvedKey;
+  }
+
   mount(config);
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init, { once: true });
+  document.addEventListener('DOMContentLoaded', () => { init(); }, { once: true });
 } else {
   init();
 }
