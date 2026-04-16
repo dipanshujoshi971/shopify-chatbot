@@ -120,16 +120,16 @@ export function getContextualQuestions(ctx: PageContext): string[] {
 
     case 'home':
       return [
-        'What are your best sellers?',
-        'Help me find a product',
-        'What\'s your return policy?',
+        'Show some products',
+        'Where is my order?',
+        'What is the return policies?',
       ];
 
     default:
       return [
-        'Help me find a product',
-        'Check my order status',
-        'What\'s your return policy?',
+        'Show some products',
+        'Where is my order?',
+        'What is the return policies?',
       ];
   }
 }

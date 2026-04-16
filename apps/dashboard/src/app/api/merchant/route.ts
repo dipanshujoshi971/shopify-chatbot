@@ -13,6 +13,7 @@ export async function GET() {
       shopDomain: merchants.shopDomain,
       status: merchants.status,
       planId: merchants.planId,
+      publishableApiKey: merchants.publishableApiKey,
       createdAt: merchants.createdAt,
     })
     .from(merchants)

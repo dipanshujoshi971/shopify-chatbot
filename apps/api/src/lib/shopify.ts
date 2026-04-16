@@ -103,6 +103,42 @@ export function decryptToken(encryptedToken: string): string {
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString();
 }
 
+// ─── App Metafields ─────────────────────────────────────────────────────────
+
+/**
+ * Store the publishable API key as a shop-level app metafield so the
+ * theme app extension can read it via {{ app.metafields.shopchat.api_key }}
+ * without the merchant entering it manually.
+ */
+export async function setApiKeyMetafield(
+  shop: string,
+  accessToken: string,
+  publishableApiKey: string,
+): Promise<void> {
+  const res = await fetch(
+    `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/metafields.json`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': accessToken,
+      },
+      body: JSON.stringify({
+        metafield: {
+          namespace: 'shopchat',
+          key: 'api_key',
+          value: publishableApiKey,
+          type: 'single_line_text_field',
+        },
+      }),
+    },
+  );
+
+  if (!res.ok) {
+    console.warn(`Failed to set API key metafield: ${res.statusText}`);
+  }
+}
+
 // ─── Webhook registration ────────────────────────────────────────────────────
 
 // Registers per-merchant webhook subscriptions via the Shopify Admin GraphQL API.

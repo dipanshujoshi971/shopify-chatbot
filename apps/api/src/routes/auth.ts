@@ -13,6 +13,7 @@ import {
   isValidShopDomain,
   encryptToken,
   registerWebhooks,
+  setApiKeyMetafield,
 } from '../lib/shopify.js';
 
 const authRoutes: FastifyPluginAsync = async (app) => {
@@ -92,6 +93,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     // 7 — Upsert merchant using the singleton db (no new pool created)
     const merchantId        = `store_${shop.replace('.myshopify.com', '').replace(/[^a-z0-9]/g, '_')}`;
     const publishableApiKey = `pk_${nanoid(32)}`;
+
+    // 7b — Store API key as a shop metafield so the theme extension can auto-read it
+    try {
+      await setApiKeyMetafield(shop, accessToken, publishableApiKey);
+      request.log.info({ shop }, 'API key metafield set');
+    } catch (err) {
+      request.log.warn({ shop, err }, 'Failed to set API key metafield');
+    }
 
     await db.insert(merchants).values({
       id:                    merchantId,

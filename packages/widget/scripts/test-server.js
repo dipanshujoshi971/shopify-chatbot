@@ -119,9 +119,9 @@ const MOCK_CONFIG = {
   position      : 'right',
   mode          : 'light',
   starterButtons: [
-    'Show me your best sellers',
-    'What\'s your return policy?',
-    'Track my order',
+    'Show some products',
+    'Where is my order?',
+    'What is the return policies?',
   ],
 };
 
