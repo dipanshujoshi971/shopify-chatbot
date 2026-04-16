@@ -24,14 +24,13 @@ export default async function DashboardLayout({
 
   // Auto-connect: if the merchant installed via Shopify OAuth, a pending_shop
   // cookie was set. Link their Clerk account to the merchant record automatically.
+  // The cookie has a 10-minute TTL and is only read (not deleted) here because
+  // Next.js doesn't allow cookie mutations inside Server Component layouts.
   if (!merchant) {
     const cookieStore = await cookies();
     const pendingShop = cookieStore.get('pending_shop')?.value;
 
     if (pendingShop) {
-      // Clear the cookie regardless of outcome
-      cookieStore.delete('pending_shop');
-
       const { userId } = await auth();
       if (userId) {
         const storeMerchant = await getMerchantByDomain(pendingShop);
