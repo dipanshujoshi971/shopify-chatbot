@@ -25,6 +25,11 @@ const envSchema = z
     // CORS
     ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
 
+    // Shared HMAC secret used to sign short-lived realtime (socket.io) tickets
+    // minted by the dashboard. Must match DASHBOARD_REALTIME_SECRET on the
+    // dashboard side. Use at least 32 random bytes (hex or base64).
+    INTERNAL_HMAC_SECRET: z.string().min(32),
+
     // Shopify
     SHOPIFY_CLIENT_ID: z.string(),
     SHOPIFY_CLIENT_SECRET: z.string(),

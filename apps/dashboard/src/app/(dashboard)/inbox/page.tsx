@@ -2,6 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
+  getRealtimeSocket,
+  type MessageNewEvent,
+  type ConversationNewEvent,
+} from '@/lib/realtime';
+import {
   MessageSquare,
   Search,
   Bot,
@@ -47,8 +52,22 @@ interface CustomerGroup {
 }
 
 /* ─── Helpers ─── */
+/**
+ * Parse a DB timestamp string as UTC.
+ * Postgres `timestamp` (without time zone) columns store UTC but serialize
+ * without a TZ suffix. Without a Z, `new Date(...)` treats the string as
+ * local time, making every timestamp appear off by the viewer's TZ offset.
+ */
+function parseDbDate(dateStr: string): Date {
+  if (!dateStr) return new Date(NaN);
+  // Already has timezone indicator (Z or +HH:MM / -HH:MM)
+  if (/[Zz]$|[+\-]\d{2}:?\d{2}$/.test(dateStr)) return new Date(dateStr);
+  // Convert "YYYY-MM-DD HH:MM:SS..." → ISO with Z
+  return new Date(dateStr.replace(' ', 'T') + 'Z');
+}
+
 function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
+  const diff = Date.now() - parseDbDate(dateStr).getTime();
   const m = Math.floor(diff / 60000);
   if (m < 1) return 'just now';
   if (m < 60) return `${m}m ago`;
@@ -56,11 +75,11 @@ function timeAgo(dateStr: string): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 30) return `${d}d ago`;
-  return new Date(dateStr).toLocaleDateString();
+  return parseDbDate(dateStr).toLocaleDateString();
 }
 
 function formatDateLabel(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-US', {
+  return parseDbDate(dateStr).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -68,7 +87,7 @@ function formatDateLabel(dateStr: string): string {
 }
 
 function formatTimeLabel(dateStr: string): string {
-  return new Date(dateStr).toLocaleTimeString('en-US', {
+  return parseDbDate(dateStr).toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
@@ -76,7 +95,7 @@ function formatTimeLabel(dateStr: string): string {
 }
 
 function getDateKey(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-CA'); // YYYY-MM-DD
+  return parseDbDate(dateStr).toLocaleDateString('en-CA'); // YYYY-MM-DD
 }
 
 function parseMessageContent(content: string): string {
@@ -258,19 +277,86 @@ export default function InboxPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // ── Load conversations ──
-  const load = useCallback(async () => {
-    setLoading(true);
+  // `silent` = background refresh, don't toggle the loading spinner
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const res = await fetch(`/api/conversations?page=${page}&limit=100`);
+      const res = await fetch(`/api/conversations?page=${page}&limit=100`, {
+        cache: 'no-store',
+      });
       const data = (await res.json()) as { conversations: Conversation[]; total: number };
       setConversations(data.conversations);
       setTotal(data.total);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page]);
 
+  // Initial fetch (socket events keep the list in sync after that)
   useEffect(() => { load(); }, [load]);
+
+  // ── Realtime: merge incoming socket events into local state ──
+  // New conversations → refetch the list (cheap and keeps ordering/totals
+  // correct). New messages → update the matching conversation's turn count
+  // and updated_at so it jumps to the top of the list.
+  useEffect(() => {
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+
+    getRealtimeSocket()
+      .then((socket) => {
+        if (cancelled) return;
+
+        const onConversationNew = (_evt: ConversationNewEvent) => {
+          // Refetch silently — easier than splicing in a partial conversation
+          // object, and the list is small (100 rows).
+          load(true);
+        };
+
+        const onMessageNew = (evt: MessageNewEvent) => {
+          setConversations((prev) => {
+            const idx = prev.findIndex((c) => c.id === evt.conversationId);
+            if (idx === -1) {
+              // Unknown conversation — refetch to pick it up.
+              load(true);
+              return prev;
+            }
+            const existing = prev[idx];
+            const updated: Conversation = {
+              ...existing,
+              total_turns:
+                evt.conversationUpdate?.total_turns ?? existing.total_turns,
+              total_tokens_used:
+                evt.conversationUpdate?.total_tokens_used ??
+                existing.total_tokens_used,
+              updated_at:
+                evt.conversationUpdate?.updated_at ?? existing.updated_at,
+            };
+            // Move to the top of the list (customer list sorts by latest activity).
+            const next = [updated, ...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            return next;
+          });
+        };
+
+        socket.on('conversation:new', onConversationNew);
+        socket.on('message:new', onMessageNew);
+
+        detach = () => {
+          socket.off('conversation:new', onConversationNew);
+          socket.off('message:new', onMessageNew);
+        };
+      })
+      .catch((err) => {
+        // If realtime can't connect, fall back to a one-shot refetch.
+        // (A future enhancement could start polling here.)
+        console.warn('inbox realtime unavailable:', err);
+      });
+
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, [load]);
 
   // ── Group conversations by customer ──
   const customerGroups: CustomerGroup[] = useMemo(() => {
@@ -292,18 +378,18 @@ export default function InboxPage() {
       }
       grouped[key].sessions.push(conv);
       grouped[key].totalTurns += conv.total_turns;
-      if (new Date(conv.created_at) > new Date(grouped[key].latestTime)) {
+      if (parseDbDate(conv.created_at) > parseDbDate(grouped[key].latestTime)) {
         grouped[key].latestTime = conv.created_at;
       }
     }
 
     // Sort sessions within each group by time desc
     for (const g of Object.values(grouped)) {
-      g.sessions.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      g.sessions.sort((a, b) => parseDbDate(b.created_at).getTime() - parseDbDate(a.created_at).getTime());
     }
 
     return Object.values(grouped).sort(
-      (a, b) => new Date(b.latestTime).getTime() - new Date(a.latestTime).getTime(),
+      (a, b) => parseDbDate(b.latestTime).getTime() - parseDbDate(a.latestTime).getTime(),
     );
   }, [conversations]);
 
@@ -344,15 +430,55 @@ export default function InboxPage() {
     );
   }, [selectedGroup, selectedSessionDate]);
 
-  // ── Load messages when conversation selected ──
+  // ── Load messages when conversation selected + realtime append ──
   useEffect(() => {
     if (!selectedConvId) return;
-    setLoadingMessages(true);
-    fetch(`/api/conversations/${selectedConvId}`)
-      .then((r) => r.json())
-      .then((data) => setMessages(data.messages ?? []))
-      .catch(() => setMessages([]))
-      .finally(() => setLoadingMessages(false));
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+
+    const fetchMessages = async () => {
+      setLoadingMessages(true);
+      try {
+        const res = await fetch(`/api/conversations/${selectedConvId}`, {
+          cache: 'no-store',
+        });
+        const data = await res.json();
+        if (!cancelled) setMessages(data.messages ?? []);
+      } catch {
+        if (!cancelled) setMessages([]);
+      } finally {
+        if (!cancelled) setLoadingMessages(false);
+      }
+    };
+
+    fetchMessages();
+
+    // Subscribe to new-message events for this conversation and append them.
+    getRealtimeSocket()
+      .then((socket) => {
+        if (cancelled) return;
+
+        const onMessageNew = (evt: MessageNewEvent) => {
+          if (evt.conversationId !== selectedConvId) return;
+          setMessages((prev) => {
+            // Ignore duplicates — fast path when the REST fetch and the
+            // socket event race.
+            if (prev.some((m) => m.id === evt.message.id)) return prev;
+            return [...prev, evt.message];
+          });
+        };
+
+        socket.on('message:new', onMessageNew);
+        detach = () => socket.off('message:new', onMessageNew);
+      })
+      .catch(() => {
+        // Realtime unavailable — messages still load from the initial fetch.
+      });
+
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
   }, [selectedConvId]);
 
   // ── Auto-scroll ──
@@ -634,7 +760,7 @@ export default function InboxPage() {
                         <div className="flex items-center gap-3 py-2">
                           <div className="flex-1 h-px bg-[var(--glass-border)]" />
                           <span className="text-[10px] text-muted-foreground font-medium">
-                            {new Date(messages[0].created_at).toLocaleDateString('en-US', {
+                            {parseDbDate(messages[0].created_at).toLocaleDateString('en-US', {
                               weekday: 'long',
                               month: 'short',
                               day: 'numeric',
@@ -675,7 +801,7 @@ export default function InboxPage() {
                                     isUser ? 'text-primary-foreground/60' : 'text-muted-foreground',
                                   )}
                                 >
-                                  {new Date(msg.created_at).toLocaleTimeString('en-US', {
+                                  {parseDbDate(msg.created_at).toLocaleTimeString('en-US', {
                                     hour: '2-digit',
                                     minute: '2-digit',
                                   })}

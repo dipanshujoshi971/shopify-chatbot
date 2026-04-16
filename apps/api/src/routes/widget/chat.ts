@@ -137,6 +137,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
       const conversationId = body.conversationId ?? nanoid();
       let currentTurns       = 0;
       let currentTotalTokens = 0;
+      let conversationCreated = false;
 
       if (!body.conversationId) {
         await pgPool.unsafe(
@@ -145,6 +146,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
            VALUES ($1, $2, 'active', 0, 0, now(), now())`,
           [conversationId, body.sessionId],
         );
+        conversationCreated = true;
       } else {
         const [conv] = await pgPool.unsafe(
           `SELECT id, total_tokens_used, total_turns, status
@@ -161,12 +163,28 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
              VALUES ($1, $2, 'active', 0, 0, now(), now())`,
             [conversationId, body.sessionId],
           );
+          conversationCreated = true;
         } else {
           if (conv.status !== 'active') {
             return reply.code(400).send({ error: 'Conversation is closed' });
           }
           currentTurns       = conv.total_turns       ?? 0;
           currentTotalTokens = conv.total_tokens_used ?? 0;
+        }
+      }
+
+      // Notify dashboard listeners of a brand-new conversation. Fire-and-forget
+      // — socket delivery failures must never block the chat response.
+      if (conversationCreated) {
+        try {
+          app.io.to(`tenant:${tenantId}`).emit('conversation:new', {
+            tenantId,
+            conversationId,
+            sessionId: body.sessionId,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          request.log.warn({ err }, 'chat: conversation:new emit failed');
         }
       }
 
@@ -227,12 +245,30 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         });
 
       // ── 5. Persist the incoming user message immediately ──────────────────
+      const userMessageId = nanoid();
       await pgPool.unsafe(
         `INSERT INTO "tenant_${safeName}"."messages"
            (id, conversation_id, role, content, created_at)
          VALUES ($1, $2, 'user', $3, now())`,
-        [nanoid(), conversationId, JSON.stringify({ type: 'text', text: body.message })],
+        [userMessageId, conversationId, JSON.stringify({ type: 'text', text: body.message })],
       );
+
+      // Notify dashboard listeners immediately — fire-and-forget.
+      try {
+        app.io.to(`tenant:${tenantId}`).emit('message:new', {
+          tenantId,
+          conversationId,
+          sessionId: body.sessionId,
+          message: {
+            id:         userMessageId,
+            role:       'user',
+            content:    JSON.stringify({ type: 'text', text: body.message }),
+            created_at: new Date().toISOString(),
+          },
+        });
+      } catch (err) {
+        request.log.warn({ err }, 'chat: user message:new emit failed');
+      }
 
       // ── 6. Build system prompt ────────────────────────────────────────────
       const systemPrompt = buildSystemPrompt(
@@ -397,12 +433,13 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
           }));
         }
 
+        const assistantMessageId = nanoid();
         try {
           await pgPool.unsafe(
             `INSERT INTO "tenant_${safeName}"."messages"
                (id, conversation_id, role, content, created_at)
              VALUES ($1, $2, 'assistant', $3, now())`,
-            [nanoid(), conversationId, JSON.stringify(persistedContent)],
+            [assistantMessageId, conversationId, JSON.stringify(persistedContent)],
           );
 
           await pgPool.unsafe(
@@ -415,6 +452,28 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
               WHERE id = $4`,
             [tokensUsed, promptTokensTotal, completionTokensTotal, conversationId],
           );
+
+          // Notify dashboard listeners — fire-and-forget.
+          try {
+            app.io.to(`tenant:${tenantId}`).emit('message:new', {
+              tenantId,
+              conversationId,
+              sessionId: body.sessionId,
+              message: {
+                id:         assistantMessageId,
+                role:       'assistant',
+                content:    JSON.stringify(persistedContent),
+                created_at: new Date().toISOString(),
+              },
+              conversationUpdate: {
+                total_turns:       currentTurns + 1,
+                total_tokens_used: currentTotalTokens + tokensUsed,
+                updated_at:        new Date().toISOString(),
+              },
+            });
+          } catch (err) {
+            request.log.warn({ err }, 'chat: assistant message:new emit failed');
+          }
         } catch (err) {
           request.log.error({ err, tenantId, conversationId }, 'chat: DB write failed');
         }

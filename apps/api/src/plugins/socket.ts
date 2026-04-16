@@ -1,4 +1,5 @@
 import fp from 'fastify-plugin';
+import crypto from 'node:crypto';
 import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -11,9 +12,75 @@ declare module 'fastify' {
   }
 }
 
+/**
+ * Handshake shape.
+ *
+ * Widget path (default, backwards-compatible):
+ *   { tenantId, sessionId }
+ *
+ * Dashboard path (authenticated merchant watching their own tenant):
+ *   { role: 'dashboard', ticket }
+ *   — ticket is a `base64url(payload).base64url(hmac)` string minted by the
+ *     dashboard's /api/realtime/ticket route using INTERNAL_HMAC_SECRET.
+ *     Payload = JSON { tenantId, exp } where exp is a unix ms timestamp.
+ */
 interface SocketHandshakeAuth {
+  role?: 'widget' | 'dashboard';
   tenantId?: string;
   sessionId?: string;
+  ticket?: string;
+}
+
+interface DashboardTicketPayload {
+  tenantId: string;
+  exp: number;
+}
+
+/**
+ * Verify a dashboard ticket: constant-time HMAC check, then payload parse
+ * and expiry check. Returns the tenantId on success, null otherwise.
+ */
+function verifyDashboardTicket(ticket: string): string | null {
+  const parts = ticket.split('.');
+  if (parts.length !== 2) return null;
+  const [payloadB64, sigB64] = parts;
+
+  const expectedSig = crypto
+    .createHmac('sha256', env.INTERNAL_HMAC_SECRET)
+    .update(payloadB64)
+    .digest();
+
+  let providedSig: Buffer;
+  try {
+    providedSig = Buffer.from(sigB64, 'base64url');
+  } catch {
+    return null;
+  }
+
+  if (
+    providedSig.length !== expectedSig.length ||
+    !crypto.timingSafeEqual(providedSig, expectedSig)
+  ) {
+    return null;
+  }
+
+  let payload: DashboardTicketPayload;
+  try {
+    payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+
+  if (
+    !payload ||
+    typeof payload.tenantId !== 'string' ||
+    typeof payload.exp !== 'number' ||
+    payload.exp < Date.now()
+  ) {
+    return null;
+  }
+
+  return payload.tenantId;
 }
 
 const socketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
@@ -51,40 +118,61 @@ const socketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.decorate('io', io);
 
   io.use((socket: Socket, next) => {
-    const { tenantId, sessionId } = socket.handshake.auth as SocketHandshakeAuth;
+    const auth = socket.handshake.auth as SocketHandshakeAuth;
 
+    // Dashboard path — ticket-authenticated merchant listening to their own
+    // tenant room. No sessionId required.
+    if (auth.role === 'dashboard') {
+      if (!auth.ticket || typeof auth.ticket !== 'string') {
+        return next(new Error('AUTH_MISSING_TICKET'));
+      }
+      const tenantId = verifyDashboardTicket(auth.ticket);
+      if (!tenantId) return next(new Error('AUTH_INVALID_TICKET'));
+
+      socket.data.role      = 'dashboard';
+      socket.data.tenantId  = tenantId;
+      return next();
+    }
+
+    // Widget path (default) — unchanged for backwards compatibility.
+    const { tenantId, sessionId } = auth;
     if (!tenantId || typeof tenantId !== 'string') {
       return next(new Error('AUTH_MISSING_TENANT_ID'));
     }
-
     if (!sessionId || typeof sessionId !== 'string') {
       return next(new Error('AUTH_MISSING_SESSION_ID'));
     }
 
+    socket.data.role      = 'widget';
     socket.data.tenantId  = tenantId;
     socket.data.sessionId = sessionId;
     next();
   });
 
   io.on('connection', (socket: Socket) => {
-    const { tenantId, sessionId } = socket.data as {
+    const { role, tenantId, sessionId } = socket.data as {
+      role: 'widget' | 'dashboard';
       tenantId: string;
-      sessionId: string;
+      sessionId?: string;
     };
 
     const logger = fastify.log.child({
-      tenant_id: tenantId,
+      role,
+      tenant_id:  tenantId,
       session_id: sessionId,
       socket_id:  socket.id,
     });
 
     logger.info('socket connected');
 
-    const tenantRoom  = `tenant:${tenantId}`;
-    const sessionRoom = `tenant:${tenantId}:session:${sessionId}`;
-
+    const tenantRoom = `tenant:${tenantId}`;
     socket.join(tenantRoom);
-    socket.join(sessionRoom);
+
+    // Widget sockets also join their per-session room so we can target them
+    // directly. Dashboard sockets only listen at the tenant level.
+    if (role === 'widget' && sessionId) {
+      socket.join(`tenant:${tenantId}:session:${sessionId}`);
+    }
 
     socket.on('disconnect', (reason) => {
       logger.info({ reason }, 'socket disconnected');
