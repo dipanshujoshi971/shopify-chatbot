@@ -5,7 +5,7 @@ import { getQueue } from '../lib/queue.js';
 import { env } from '../env.js';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { logger } from '../logger.js';
-import OpenAI from 'openai';
+import { AzureOpenAI } from 'openai';
 import { nanoid } from 'nanoid';
 import { PDFParse } from 'pdf-parse';
 import mammoth from 'mammoth';
@@ -33,7 +33,10 @@ const BACKOFF_DELAYS = [1_000, 5_000, 30_000];
 
 // ── Singletons ───────────────────────────────────────────────────────────────
 
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const openai = new AzureOpenAI({
+  apiKey: env.AZURE_API_KEY,
+  endpoint: `https://${env.AZURE_RESOURCE_NAME}.openai.azure.com`,
+});
 const enc = encoding_for_model('gpt-4o'); // cl100k_base encoding
 
 const log = logger.child({ worker: 'knowledge-embed' });

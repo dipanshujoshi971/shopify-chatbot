@@ -1,7 +1,7 @@
 /**
  * apps/api/src/env.ts
  *
- * Environment validation — OpenAI only (no Anthropic).
+ * Environment validation — Azure OpenAI (no Anthropic).
  */
 import { config } from 'dotenv';
 config();
@@ -37,8 +37,9 @@ const envSchema = z
       'read_products,read_orders,write_orders,read_customers'
     ),
 
-    // ── OpenAI (used for both LLM and embeddings) ───────────────────
-    OPENAI_API_KEY: z.string(),
+    // ── Azure OpenAI (used for both LLM and embeddings) ──────────────
+    AZURE_API_KEY: z.string(),
+    AZURE_RESOURCE_NAME: z.string(),
 
     // Cloudflare R2 (S3-compatible object storage)
     R2_ACCOUNT_ID: z.string(),

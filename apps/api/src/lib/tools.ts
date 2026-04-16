@@ -19,7 +19,7 @@ import { tool }       from 'ai';
 import { z }          from 'zod';
 import type postgres  from 'postgres';
 import { nanoid }     from 'nanoid';
-import OpenAI         from 'openai';
+import { AzureOpenAI } from 'openai';
 import { decryptToken } from './shopify.js';
 import { env }        from '../env.js';
 
@@ -158,9 +158,12 @@ const ORDER_DETAILS_QUERY = `
   }
 `;
 
-// ─── OpenAI singleton (for query embeddings) ─────────────────────────────────
+// ─── Azure OpenAI singleton (for query embeddings) ──────────────────────────
 
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const openai = new AzureOpenAI({
+  apiKey: env.AZURE_API_KEY,
+  endpoint: `https://${env.AZURE_RESOURCE_NAME}.openai.azure.com`,
+});
 const EMBED_MODEL = 'text-embedding-3-small';
 
 // ─── Knowledge search types ──────────────────────────────────────────────────

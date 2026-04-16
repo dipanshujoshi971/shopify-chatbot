@@ -125,7 +125,7 @@ app.get('/readyz', async (request, reply) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 logger.info(
-  { provider: 'openai', port: env.PORT },
+  { provider: 'azure', port: env.PORT },
   'Server configuration loaded',
 );
 try {

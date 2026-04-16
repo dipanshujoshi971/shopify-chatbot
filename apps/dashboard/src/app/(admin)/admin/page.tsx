@@ -178,7 +178,7 @@ export default function AdminOverviewPage() {
             </div>
           </div>
           <p className="text-2xl font-bold text-foreground">{formatCost(totalCost)}</p>
-          <p className="text-xs text-muted-foreground mt-1">Based on gpt-4o-mini pricing</p>
+          <p className="text-xs text-muted-foreground mt-1">Based on gpt-4.1-mini pricing</p>
         </div>
         <div className="glass-card p-5">
           <div className="flex items-center justify-between mb-2">

@@ -1,49 +1,45 @@
 /**
  * apps/api/src/lib/llm.ts
  *
- * LLM Provider — OpenAI Only
+ * LLM Provider — Azure OpenAI
  * ──────────────────────────────────────────────────────────────────
- * Returns the Vercel AI SDK LanguageModelV1 instance using OpenAI.
+ * Returns the Vercel AI SDK LanguageModelV1 instance using Azure OpenAI.
  *
- * Models:
- *   fast    → gpt-4o-mini  (default, most traffic)
- *   quality → gpt-4o       (complex queries)
+ * Models (deployment names):
+ *   fast    → gpt-4.1-mini  (default, most traffic)
+ *   quality → gpt-4.1       (complex queries)
  */
 
-import { createOpenAI }  from '@ai-sdk/openai';
+import { createAzure }  from '@ai-sdk/azure';
 import type { LanguageModelV1 } from '@ai-sdk/provider';
 import { env }           from '../env.js';
 
-// ── Model IDs ──────────────────────────────────────────────────────
+// ── Deployment Names ───────────────────────────────────────────────
 
 const MODELS = {
-  fast   : 'gpt-4o-mini',
-  quality: 'gpt-4o',
+  fast   : 'gpt-4.1-mini',
+  quality: 'gpt-4.1',
 } as const;
 
 export type LLMTier = 'fast' | 'quality';
 
-// ── Lazy OpenAI provider ──────────────────────────────────────────
+// ── Lazy Azure OpenAI provider ────────────────────────────────────
 
-let _openai: ReturnType<typeof createOpenAI> | null = null;
+let _azure: ReturnType<typeof createAzure> | null = null;
 
-function getOpenAIProvider(): ReturnType<typeof createOpenAI> {
-  if (!_openai) {
-    if (!env.OPENAI_API_KEY) {
+function getAzureProvider(): ReturnType<typeof createAzure> {
+  if (!_azure) {
+    if (!env.AZURE_API_KEY) {
       throw new Error(
-        '[llm] OPENAI_API_KEY is not set. Add OPENAI_API_KEY to your .env file.',
+        '[llm] AZURE_API_KEY is not set. Add AZURE_API_KEY to your .env file.',
       );
     }
-    _openai = createOpenAI({
-      apiKey: env.OPENAI_API_KEY,
-      // CRITICAL: 'strict' mode tells the SDK to send
-      // `stream_options: { include_usage: true }` to OpenAI.
-      // Without this, OpenAI streams return NO token usage data,
-      // causing promptTokens/completionTokens to be NaN → 0.
-      compatibility: 'strict',
+    _azure = createAzure({
+      resourceName: env.AZURE_RESOURCE_NAME,
+      apiKey: env.AZURE_API_KEY,
     });
   }
-  return _openai;
+  return _azure;
 }
 
 // ── Public API ─────────────────────────────────────────────────────
@@ -51,13 +47,13 @@ function getOpenAIProvider(): ReturnType<typeof createOpenAI> {
 /**
  * getLLMModel
  *
- * Returns the Vercel AI SDK model instance for OpenAI.
+ * Returns the Vercel AI SDK model instance for Azure OpenAI.
  *
- * @param tier  'fast' (default) — gpt-4o-mini
- *              'quality'        — gpt-4o
+ * @param tier  'fast' (default) — gpt-4.1-mini
+ *              'quality'        — gpt-4.1
  */
 export function getLLMModel(tier: LLMTier = 'fast'): LanguageModelV1 {
-  return getOpenAIProvider()(MODELS[tier]);
+  return getAzureProvider()(MODELS[tier]);
 }
 
 /**
@@ -66,8 +62,8 @@ export function getLLMModel(tier: LLMTier = 'fast'): LanguageModelV1 {
  * Returns provider + model name for structured logging / response headers.
  */
 export function getLLMInfo(tier: LLMTier = 'fast'): {
-  provider: 'openai';
+  provider: 'azure';
   model: string;
 } {
-  return { provider: 'openai', model: MODELS[tier] };
+  return { provider: 'azure', model: MODELS[tier] };
 }

@@ -1,8 +1,8 @@
 
 // Pricing per 1M tokens (USD)
 const PRICING: Record<string, { input: number; output: number }> = {
-  'gpt-4o-mini':  { input: 0.15,  output: 0.60  },
-  'gpt-4o':       { input: 2.50,  output: 10.00 },
+  'gpt-4.1-mini': { input: 0.40,  output: 1.60  },
+  'gpt-4.1':      { input: 2.00,  output: 8.00  },
 };
 
 // Embedding pricing per 1M tokens (USD) — input only, no output
@@ -14,7 +14,7 @@ const EMBEDDING_PRICING: Record<string, number> = {
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 
 // Default model for cost estimation (matches LLM_PROVIDER default: 'fast' tier)
-const DEFAULT_MODEL = 'gpt-4o-mini';
+const DEFAULT_MODEL = 'gpt-4.1-mini';
 
 /**
  * Estimate cost in USD for a given token count
