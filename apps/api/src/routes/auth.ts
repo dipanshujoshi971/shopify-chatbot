@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { nanoid } from 'nanoid';
 import { valkey } from '../valkey.js';
 import { provisionTenantSchema } from '@chatbot/db';
-import { merchants, auditLog } from '@chatbot/db';
+import { merchants, auditLog, eq } from '@chatbot/db';
 import { db } from '../db.js';              // ← singleton, no per-request pool
 import { env } from '../env.js';
 import {
@@ -24,6 +24,26 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Invalid shop domain' });
     }
 
+    // If the merchant already has a record (returning user clicking the app
+    // in Shopify admin), skip OAuth and send them straight to the dashboard.
+    const existing = await db
+      .select({ id: merchants.id, encryptedShopifyToken: merchants.encryptedShopifyToken })
+      .from(merchants)
+      .where(eq(merchants.shopDomain, shop))
+      .limit(1);
+
+    if (existing[0]?.encryptedShopifyToken) {
+      request.log.info({ shop }, 'Merchant already installed — redirecting to dashboard');
+      const isSecure = env.NODE_ENV === 'production';
+      reply.header(
+        'Set-Cookie',
+        `pending_shop=${shop}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isSecure ? '; Secure' : ''}`,
+      );
+      const dashboardUrl = env.ALLOWED_ORIGINS.split(',')[0].trim();
+      return reply.redirect(`${dashboardUrl}/sign-up`);
+    }
+
+    // New install — start OAuth flow
     const state = crypto.randomBytes(16).toString('hex');
     await valkey.set(`oauth_state:${state}`, shop, 'EX', 600);
 
@@ -105,7 +125,19 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     });
 
     request.log.info({ shop, merchantId }, 'OAuth complete — merchant ready');
-    return reply.redirect(`${env.ALLOWED_ORIGINS}/dashboard?shop=${shop}`);
+
+    // Set a short-lived cookie so the dashboard can auto-connect the store
+    // after the merchant completes Clerk sign-up/sign-in.
+    const isSecure = env.NODE_ENV === 'production';
+    reply.header(
+      'Set-Cookie',
+      `pending_shop=${shop}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isSecure ? '; Secure' : ''}`,
+    );
+
+    // Redirect to sign-up — new merchants need a dashboard account first.
+    // Existing merchants can click "Already have an account? Sign in".
+    const dashboardUrl = env.ALLOWED_ORIGINS.split(',')[0].trim();
+    return reply.redirect(`${dashboardUrl}/sign-up`);
   });
 
 };

@@ -1,25 +1,52 @@
 import { redirect } from 'next/navigation';
-import { getMerchant } from '@/lib/merchant';
+import { cookies } from 'next/headers';
+import { getMerchant, getMerchantByDomain } from '@/lib/merchant';
 import { isSuperAdmin } from '@/lib/admin';
-import { currentUser } from '@clerk/nextjs/server';
+import { auth, currentUser } from '@clerk/nextjs/server';
 import { Sidebar, MobileNav } from '@/components/dashboard/sidebar';
 import { Header } from '@/components/dashboard/header';
 import { ConnectStoreForm } from '@/components/dashboard/connect-store-form';
 import { DashboardContent } from '@/components/dashboard/dashboard-content';
+import { db } from '@/lib/db';
+import { merchants, eq } from '@chatbot/db';
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [merchant, user, isAdmin] = await Promise.all([getMerchant(), currentUser(), isSuperAdmin()]);
+  let [merchant, user, isAdmin] = await Promise.all([getMerchant(), currentUser(), isSuperAdmin()]);
 
   // Super admin auto-redirect: send them straight to the admin panel
   if (isAdmin) {
     redirect('/admin');
   }
 
+  // Auto-connect: if the merchant installed via Shopify OAuth, a pending_shop
+  // cookie was set. Link their Clerk account to the merchant record automatically.
   if (!merchant) {
+    const cookieStore = await cookies();
+    const pendingShop = cookieStore.get('pending_shop')?.value;
+
+    if (pendingShop) {
+      // Clear the cookie regardless of outcome
+      cookieStore.delete('pending_shop');
+
+      const { userId } = await auth();
+      if (userId) {
+        const storeMerchant = await getMerchantByDomain(pendingShop);
+        if (storeMerchant && (!storeMerchant.clerkUserId || storeMerchant.clerkUserId === userId)) {
+          await db
+            .update(merchants)
+            .set({ clerkUserId: userId, updatedAt: new Date() })
+            .where(eq(merchants.id, storeMerchant.id));
+
+          // Redirect so the layout re-runs with the linked merchant
+          redirect('/dashboard');
+        }
+      }
+    }
+
     return <ConnectStoreForm />;
   }
 
