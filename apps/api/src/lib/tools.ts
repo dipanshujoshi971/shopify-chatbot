@@ -59,6 +59,15 @@ async function shopifyGraphQL(
   );
 
   if (!res.ok) {
+    // Diagnostic: safe token fingerprint (prefix + length only, never the full secret)
+    const tokenPrefix = accessToken.slice(0, 6);
+    const tokenLen = accessToken.length;
+    let body = '';
+    try { body = (await res.text()).slice(0, 300); } catch { /* ignore */ }
+    console.error(
+      `[shopifyGraphQL] ${res.status} ${res.statusText} shop=${shopDomain} ` +
+      `apiVersion=${GRAPHQL_API_VERSION} tokenPrefix="${tokenPrefix}" tokenLen=${tokenLen} body="${body}"`,
+    );
     throw new Error(`Shopify GraphQL HTTP ${res.status}: ${res.statusText}`);
   }
 
@@ -209,7 +218,17 @@ export function createAdminTools(ctx: AdminToolContext) {
         }
 
         try {
-          const accessToken = decryptToken(ctx.encryptedShopifyToken);
+          let accessToken: string;
+          try {
+            accessToken = decryptToken(ctx.encryptedShopifyToken);
+          } catch (e) {
+            console.error(`[get_order_status] Token decryption failed for ${ctx.shopDomain} — SHOPIFY_CLIENT_SECRET may have changed since the token was saved. Merchant must reinstall the app.`, (e as Error).message);
+            return { found: false, message: 'Order lookup is not configured for this store. Please reinstall the app.' };
+          }
+          if (!/^shp(at|ua|ca|pa)_/.test(accessToken)) {
+            console.error(`[get_order_status] Decrypted token does not start with expected shpat_/shpua_ prefix for ${ctx.shopDomain} — likely SHOPIFY_CLIENT_SECRET mismatch. Merchant must reinstall.`);
+            return { found: false, message: 'Order lookup is not configured for this store. Please reinstall the app.' };
+          }
           const orderNumber = order_identifier.replace(/^#/, '').trim();
           const orderName   = `#${orderNumber}`;  // Shopify stores as "#1033"
 
