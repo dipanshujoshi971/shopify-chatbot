@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { getMerchant, safeName } from '@/lib/merchant';
 import { pgPool } from '@/lib/db';
+import { emitRealtime } from '@/lib/internal-emit';
 
 export async function GET(
   _req: NextRequest,
@@ -19,7 +20,8 @@ export async function GET(
   try {
     const rows = await pgPool.unsafe(
       `SELECT id, subject, customer_email, customer_message, status, ticket_type,
-              priority, conversation_id, replies, assignee, created_at, updated_at
+              priority, conversation_id, replies, assignee, created_at, updated_at,
+              admin_unread_count, merchant_unread_count
          FROM "tenant_${sn}"."support_tickets"
         WHERE id = $1`,
       [id],
@@ -27,7 +29,6 @@ export async function GET(
 
     if (!rows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    // If ticket has a linked conversation, fetch its messages
     const ticket = rows[0] as any;
     let messages: unknown[] = [];
     if (ticket.conversation_id) {
@@ -67,7 +68,17 @@ export async function PUT(
   };
 
   try {
-    // Update status / assignee / priority if provided
+    const existingRows = await pgPool.unsafe(
+      `SELECT ticket_type, subject FROM "tenant_${sn}"."support_tickets" WHERE id = $1`,
+      [id],
+    );
+    const existing = existingRows[0] as
+      | { ticket_type?: string; subject?: string }
+      | undefined;
+    if (!existing) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     const updates: string[] = ['updated_at = now()'];
     const vals: (string | number)[] = [];
     let idx = 1;
@@ -85,9 +96,11 @@ export async function PUT(
       vals.push(body.priority);
     }
 
-    // Add reply if provided
+    let replyObj:
+      | { id: string; author: string; message: string; createdAt: string }
+      | null = null;
     if (body.reply) {
-      const replyObj = {
+      replyObj = {
         id: `reply_${Date.now()}`,
         author: body.reply.author,
         message: body.reply.message,
@@ -95,6 +108,10 @@ export async function PUT(
       };
       updates.push(`replies = COALESCE(replies, '[]'::jsonb) || $${idx++}::jsonb`);
       vals.push(JSON.stringify(replyObj));
+      // Merchant replying on a merchant_to_admin ticket → bump admin unread.
+      if (existing.ticket_type === 'merchant_to_admin') {
+        updates.push(`admin_unread_count = COALESCE(admin_unread_count, 0) + 1`);
+      }
     }
 
     vals.push(id);
@@ -106,8 +123,16 @@ export async function PUT(
       vals,
     );
 
-    // Email notifications are sent from the super-admin side only for now.
-    // Merchant-side email provider integration will be added later.
+    if (replyObj && existing.ticket_type === 'merchant_to_admin') {
+      emitRealtime('admin:global', 'ticket:reply', {
+        ticketId: id,
+        merchantId: merchant.id,
+        shopDomain: merchant.shopDomain,
+        subject: existing.subject,
+        from: 'merchant',
+        reply: replyObj,
+      });
+    }
 
     return NextResponse.json({ success: true });
   } catch {

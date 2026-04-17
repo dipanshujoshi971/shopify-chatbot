@@ -17,12 +17,19 @@ interface EmailParams {
   text?: string;
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export async function sendEmail(params: EmailParams): Promise<boolean> {
   if (!RESEND_API_KEY) {
     console.log(
       `[email] RESEND_API_KEY not set — skipping email to ${params.to}`,
       `Subject: ${params.subject}`,
     );
+    return false;
+  }
+
+  if (!params.to || !EMAIL_RE.test(params.to)) {
+    console.warn(`[email] Skipping send — invalid recipient: ${JSON.stringify(params.to)}`);
     return false;
   }
 

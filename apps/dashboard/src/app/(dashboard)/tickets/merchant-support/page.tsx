@@ -18,6 +18,7 @@ import {
   Ticket,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getRealtimeSocket } from '@/lib/realtime';
 
 /* ─── Types ─── */
 interface TicketData {
@@ -33,6 +34,8 @@ interface TicketData {
   assignee: string | null;
   created_at: string;
   updated_at: string;
+  admin_unread_count?: number;
+  merchant_unread_count?: number;
 }
 
 const statusConfig: Record<string, { icon: typeof Circle; color: string; label: string }> = {
@@ -320,6 +323,56 @@ export default function MerchantSupportPage() {
     load();
   }, [load]);
 
+  // Subscribe to realtime ticket replies from super admin.
+  useEffect(() => {
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+
+    (async () => {
+      try {
+        const socket = await getRealtimeSocket();
+        if (cancelled) return;
+
+        const handler = (evt: {
+          ticketId: string;
+          from: 'admin' | 'merchant';
+          reply: { id: string; author: string; message: string; createdAt: string };
+        }) => {
+          if (evt.from !== 'admin') return;
+          setTickets((prev) =>
+            prev.map((t) =>
+              t.id === evt.ticketId
+                ? {
+                    ...t,
+                    replies: [...(Array.isArray(t.replies) ? t.replies : []), evt.reply],
+                    merchant_unread_count: (t.merchant_unread_count ?? 0) + 1,
+                  }
+                : t,
+            ),
+          );
+          setSelectedTicket((cur) =>
+            cur && cur.id === evt.ticketId
+              ? {
+                  ...cur,
+                  replies: [...(Array.isArray(cur.replies) ? cur.replies : []), evt.reply],
+                }
+              : cur,
+          );
+        };
+
+        socket.on('ticket:reply', handler);
+        cleanup = () => socket.off('ticket:reply', handler);
+      } catch {
+        // Realtime unavailable — list will still refresh via `load`.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, []);
+
   const filtered = search
     ? tickets.filter(
         (t) =>
@@ -420,7 +473,17 @@ export default function MerchantSupportPage() {
               return (
                 <button
                   key={ticket.id}
-                  onClick={() => setSelectedTicket(ticket)}
+                  onClick={() => {
+                    setSelectedTicket(ticket);
+                    if ((ticket.merchant_unread_count ?? 0) > 0) {
+                      fetch(`/api/tickets/${ticket.id}/mark-read`, { method: 'POST' }).catch(() => {});
+                      setTickets((prev) =>
+                        prev.map((t) =>
+                          t.id === ticket.id ? { ...t, merchant_unread_count: 0 } : t,
+                        ),
+                      );
+                    }
+                  }}
                   className="w-full text-left px-5 py-4 hover:bg-accent/20 transition-all flex items-center gap-4"
                 >
                   <st.icon className={cn('w-5 h-5 flex-shrink-0', st.color)} />
@@ -437,6 +500,12 @@ export default function MerchantSupportPage() {
                       >
                         {ticket.priority}
                       </span>
+                      {(ticket.merchant_unread_count ?? 0) > 0 && (
+                        <span className="flex items-center gap-1 text-[10px] font-semibold text-red-500">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_6px] shadow-red-500/60" />
+                          {ticket.merchant_unread_count} new
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm font-medium text-foreground truncate">{ticket.subject}</p>
                     <p className="text-xs text-muted-foreground mt-0.5 truncate">

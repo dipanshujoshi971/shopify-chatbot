@@ -17,6 +17,7 @@ import {
   Filter,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getAdminRealtimeSocket } from '@/lib/realtime-admin';
 
 interface TicketData {
   id: string;
@@ -33,6 +34,8 @@ interface TicketData {
   updated_at: string;
   merchantId: string;
   shopDomain: string;
+  admin_unread_count?: number;
+  merchant_unread_count?: number;
 }
 
 const statusConfig: Record<string, { icon: typeof Circle; color: string; label: string }> = {
@@ -317,6 +320,58 @@ export default function AdminTicketsPage() {
     load();
   }, [load]);
 
+  // Subscribe to realtime ticket replies from merchants.
+  useEffect(() => {
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+
+    (async () => {
+      try {
+        const socket = await getAdminRealtimeSocket();
+        if (cancelled) return;
+
+        const handler = (evt: {
+          ticketId: string;
+          merchantId: string;
+          shopDomain: string;
+          from: 'admin' | 'merchant';
+          reply: { id: string; author: string; message: string; createdAt: string };
+        }) => {
+          if (evt.from !== 'merchant') return;
+          setTickets((prev) =>
+            prev.map((t) =>
+              t.id === evt.ticketId
+                ? {
+                    ...t,
+                    replies: [...(Array.isArray(t.replies) ? t.replies : []), evt.reply],
+                    admin_unread_count: (t.admin_unread_count ?? 0) + 1,
+                  }
+                : t,
+            ),
+          );
+          setSelectedTicket((cur) =>
+            cur && cur.id === evt.ticketId
+              ? {
+                  ...cur,
+                  replies: [...(Array.isArray(cur.replies) ? cur.replies : []), evt.reply],
+                }
+              : cur,
+          );
+        };
+
+        socket.on('ticket:reply', handler);
+        cleanup = () => socket.off('ticket:reply', handler);
+      } catch {
+        // Realtime unavailable — tickets still refresh via `load`.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, []);
+
   // Debounced search
   const [searchInput, setSearchInput] = useState('');
   useEffect(() => {
@@ -443,7 +498,17 @@ export default function AdminTicketsPage() {
               return (
                 <button
                   key={ticket.id}
-                  onClick={() => setSelectedTicket(ticket)}
+                  onClick={() => {
+                    setSelectedTicket(ticket);
+                    if ((ticket.admin_unread_count ?? 0) > 0) {
+                      fetch(`/api/admin/tickets/${ticket.id}/mark-read`, { method: 'POST' }).catch(() => {});
+                      setTickets((prev) =>
+                        prev.map((t) =>
+                          t.id === ticket.id ? { ...t, admin_unread_count: 0 } : t,
+                        ),
+                      );
+                    }
+                  }}
                   className="w-full text-left px-5 py-4 hover:bg-accent/20 transition-all flex items-center gap-4"
                 >
                   <st.icon className={cn('w-5 h-5 flex-shrink-0', st.color)} />
@@ -458,6 +523,12 @@ export default function AdminTicketsPage() {
                       <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-violet-500/10 text-violet-500">
                         {typeLabels[ticket.ticket_type] ?? ticket.ticket_type}
                       </span>
+                      {(ticket.admin_unread_count ?? 0) > 0 && (
+                        <span className="flex items-center gap-1 text-[10px] font-semibold text-red-500">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_6px] shadow-red-500/60" />
+                          {ticket.admin_unread_count} new
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm font-medium text-foreground truncate">{ticket.subject || 'No Subject'}</p>
                     <div className="flex items-center gap-2 mt-0.5">

@@ -31,7 +31,7 @@ const navItems: NavItem[] = [
   { href: '/admin/tickets', label: 'Tickets', icon: HeadphonesIcon },
 ];
 
-function NavLink({ item, collapsed }: { item: NavItem; collapsed?: boolean }) {
+function NavLink({ item, collapsed, showDot }: { item: NavItem; collapsed?: boolean; showDot?: boolean }) {
   const pathname = usePathname();
   const active =
     (item.href === '/admin' && pathname === '/admin') ||
@@ -49,16 +49,24 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed?: boolean }) {
           : 'text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50',
       )}
     >
-      <item.icon
-        className={cn(
-          'w-[18px] h-[18px] flex-shrink-0 transition-colors',
-          active ? 'text-red-500' : 'text-sidebar-foreground group-hover:text-sidebar-accent-foreground',
+      <div className="relative flex-shrink-0">
+        <item.icon
+          className={cn(
+            'w-[18px] h-[18px] transition-colors',
+            active ? 'text-red-500' : 'text-sidebar-foreground group-hover:text-sidebar-accent-foreground',
+          )}
+        />
+        {showDot && collapsed && (
+          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-[var(--sidebar)]" />
         )}
-      />
+      </div>
       {!collapsed && (
         <>
           <span className="flex-1">{item.label}</span>
-          {active && (
+          {showDot && (
+            <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px] shadow-red-500/60" />
+          )}
+          {active && !showDot && (
             <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_8px] shadow-red-500/60" />
           )}
         </>
@@ -69,6 +77,7 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed?: boolean }) {
 
 export function AdminSidebar({ userName, userImageUrl }: { userName?: string; userImageUrl?: string }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [ticketsUnread, setTicketsUnread] = useState(0);
 
   useEffect(() => {
     const saved = localStorage.getItem('admin-sidebar-collapsed');
@@ -82,6 +91,23 @@ export function AdminSidebar({ userName, userImageUrl }: { userName?: string; us
       collapsed ? '72px' : '260px',
     );
   }, [collapsed]);
+
+  useEffect(() => {
+    const fetchUnread = () => {
+      fetch('/api/admin/tickets/unread-count', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setTicketsUnread(d.count ?? 0))
+        .catch(() => {});
+    };
+    fetchUnread();
+    const onFocus = () => fetchUnread();
+    window.addEventListener('focus', onFocus);
+    const interval = setInterval(fetchUnread, 60_000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      clearInterval(interval);
+    };
+  }, []);
 
   return (
     <aside
@@ -131,7 +157,12 @@ export function AdminSidebar({ userName, userImageUrl }: { userName?: string; us
         )}
         <div className="space-y-0.5">
           {navItems.map((item) => (
-            <NavLink key={item.href} item={item} collapsed={collapsed} />
+            <NavLink
+              key={item.href}
+              item={item}
+              collapsed={collapsed}
+              showDot={item.href === '/admin/tickets' && ticketsUnread > 0}
+            />
           ))}
         </div>
 

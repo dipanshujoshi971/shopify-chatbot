@@ -84,7 +84,7 @@ const sections: Section[] = [
 ];
 
 /* ─── Nav Item ─── */
-function NavLink({ item, collapsed }: { item: NavItem; collapsed?: boolean }) {
+function NavLink({ item, collapsed, showDot }: { item: NavItem; collapsed?: boolean; showDot?: boolean }) {
   const pathname = usePathname();
   const active = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
 
@@ -100,16 +100,24 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed?: boolean }) {
           : 'text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50',
       )}
     >
-      <item.icon
-        className={cn(
-          'w-[18px] h-[18px] flex-shrink-0 transition-colors',
-          active ? 'text-primary' : 'text-sidebar-foreground group-hover:text-sidebar-accent-foreground',
+      <div className="relative flex-shrink-0">
+        <item.icon
+          className={cn(
+            'w-[18px] h-[18px] transition-colors',
+            active ? 'text-primary' : 'text-sidebar-foreground group-hover:text-sidebar-accent-foreground',
+          )}
+        />
+        {showDot && collapsed && (
+          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-[var(--sidebar)]" />
         )}
-      />
+      </div>
       {!collapsed && (
         <>
           <span className="flex-1">{item.label}</span>
-          {active && (
+          {showDot && (
+            <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px] shadow-red-500/60" />
+          )}
+          {active && !showDot && (
             <div className="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px] shadow-primary/60" />
           )}
           {item.badge !== undefined && item.badge > 0 && (
@@ -162,6 +170,26 @@ export function Sidebar({ shopDomain, planId, userName, userImageUrl, isAdmin, c
         if (data.conversations) setRecentChats(data.conversations.slice(0, 3));
       })
       .catch(() => {});
+  }, []);
+
+  // Merchant-support unread dot — refresh on focus + every 60s as fallback;
+  // the realtime socket keeps this near-live on the page itself.
+  const [merchantSupportUnread, setMerchantSupportUnread] = useState(0);
+  useEffect(() => {
+    const fetchUnread = () => {
+      fetch('/api/tickets/unread-count', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setMerchantSupportUnread(d.count ?? 0))
+        .catch(() => {});
+    };
+    fetchUnread();
+    const onFocus = () => fetchUnread();
+    window.addEventListener('focus', onFocus);
+    const interval = setInterval(fetchUnread, 60_000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      clearInterval(interval);
+    };
   }, []);
 
   return (
@@ -236,7 +264,12 @@ export function Sidebar({ shopDomain, planId, userName, userImageUrl, isAdmin, c
             {collapsed && <div className="my-2 mx-2 border-t border-sidebar-border" />}
             <div className="space-y-0.5">
               {section.items.map((item) => (
-                <NavLink key={item.href} item={item} collapsed={collapsed} />
+                <NavLink
+                  key={item.href}
+                  item={item}
+                  collapsed={collapsed}
+                  showDot={item.href === '/tickets/merchant-support' && merchantSupportUnread > 0}
+                />
               ))}
             </div>
           </div>

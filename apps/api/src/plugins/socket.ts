@@ -25,7 +25,7 @@ declare module 'fastify' {
  *     Payload = JSON { tenantId, exp } where exp is a unix ms timestamp.
  */
 interface SocketHandshakeAuth {
-  role?: 'widget' | 'dashboard';
+  role?: 'widget' | 'dashboard' | 'admin';
   tenantId?: string;
   sessionId?: string;
   ticket?: string;
@@ -34,6 +34,12 @@ interface SocketHandshakeAuth {
 interface DashboardTicketPayload {
   tenantId: string;
   exp: number;
+}
+
+interface AdminTicketPayload {
+  adminUserId: string;
+  exp: number;
+  kind: 'admin';
 }
 
 /**
@@ -83,6 +89,55 @@ function verifyDashboardTicket(ticket: string): string | null {
   return payload.tenantId;
 }
 
+/**
+ * Verify an admin ticket. Shares the same signing scheme as the dashboard
+ * ticket but the payload must carry `kind: 'admin'` so a merchant's dashboard
+ * ticket can't be promoted into an admin one.
+ */
+function verifyAdminTicket(ticket: string): string | null {
+  const parts = ticket.split('.');
+  if (parts.length !== 2) return null;
+  const [payloadB64, sigB64] = parts;
+
+  const expectedSig = crypto
+    .createHmac('sha256', env.INTERNAL_HMAC_SECRET)
+    .update(payloadB64)
+    .digest();
+
+  let providedSig: Buffer;
+  try {
+    providedSig = Buffer.from(sigB64, 'base64url');
+  } catch {
+    return null;
+  }
+
+  if (
+    providedSig.length !== expectedSig.length ||
+    !crypto.timingSafeEqual(providedSig, expectedSig)
+  ) {
+    return null;
+  }
+
+  let payload: AdminTicketPayload;
+  try {
+    payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+
+  if (
+    !payload ||
+    payload.kind !== 'admin' ||
+    typeof payload.adminUserId !== 'string' ||
+    typeof payload.exp !== 'number' ||
+    payload.exp < Date.now()
+  ) {
+    return null;
+  }
+
+  return payload.adminUserId;
+}
+
 const socketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   const pubClient = valkey.duplicate();
   const subClient = valkey.duplicate();
@@ -120,6 +175,19 @@ const socketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   io.use((socket: Socket, next) => {
     const auth = socket.handshake.auth as SocketHandshakeAuth;
 
+    // Admin path — super admin listening on admin:global.
+    if (auth.role === 'admin') {
+      if (!auth.ticket || typeof auth.ticket !== 'string') {
+        return next(new Error('AUTH_MISSING_TICKET'));
+      }
+      const adminUserId = verifyAdminTicket(auth.ticket);
+      if (!adminUserId) return next(new Error('AUTH_INVALID_TICKET'));
+
+      socket.data.role = 'admin';
+      socket.data.adminUserId = adminUserId;
+      return next();
+    }
+
     // Dashboard path — ticket-authenticated merchant listening to their own
     // tenant room. No sessionId required.
     if (auth.role === 'dashboard') {
@@ -150,28 +218,34 @@ const socketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   });
 
   io.on('connection', (socket: Socket) => {
-    const { role, tenantId, sessionId } = socket.data as {
-      role: 'widget' | 'dashboard';
-      tenantId: string;
+    const { role, tenantId, sessionId, adminUserId } = socket.data as {
+      role: 'widget' | 'dashboard' | 'admin';
+      tenantId?: string;
       sessionId?: string;
+      adminUserId?: string;
     };
 
     const logger = fastify.log.child({
       role,
       tenant_id:  tenantId,
       session_id: sessionId,
+      admin_user_id: adminUserId,
       socket_id:  socket.id,
     });
 
     logger.info('socket connected');
 
-    const tenantRoom = `tenant:${tenantId}`;
-    socket.join(tenantRoom);
+    if (role === 'admin') {
+      socket.join('admin:global');
+    } else if (tenantId) {
+      const tenantRoom = `tenant:${tenantId}`;
+      socket.join(tenantRoom);
 
-    // Widget sockets also join their per-session room so we can target them
-    // directly. Dashboard sockets only listen at the tenant level.
-    if (role === 'widget' && sessionId) {
-      socket.join(`tenant:${tenantId}:session:${sessionId}`);
+      // Widget sockets also join their per-session room so we can target them
+      // directly. Dashboard sockets only listen at the tenant level.
+      if (role === 'widget' && sessionId) {
+        socket.join(`tenant:${tenantId}:session:${sessionId}`);
+      }
     }
 
     socket.on('disconnect', (reason) => {

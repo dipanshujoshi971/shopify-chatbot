@@ -36,7 +36,9 @@ export async function GET(request: NextRequest) {
          ADD COLUMN IF NOT EXISTS ticket_type TEXT DEFAULT 'customer',
          ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'medium',
          ADD COLUMN IF NOT EXISTS replies JSONB DEFAULT '[]'::jsonb,
-         ADD COLUMN IF NOT EXISTS assignee TEXT`,
+         ADD COLUMN IF NOT EXISTS assignee TEXT,
+         ADD COLUMN IF NOT EXISTS admin_unread_count INT NOT NULL DEFAULT 0,
+         ADD COLUMN IF NOT EXISTS merchant_unread_count INT NOT NULL DEFAULT 0`,
       );
 
       const conditions: string[] = [];
@@ -56,7 +58,8 @@ export async function GET(request: NextRequest) {
 
       const rows = await pgPool.unsafe(
         `SELECT id, subject, customer_email, customer_message, status, ticket_type,
-                priority, conversation_id, replies, assignee, created_at, updated_at
+                priority, conversation_id, replies, assignee, created_at, updated_at,
+                admin_unread_count, merchant_unread_count
            FROM "tenant_${sn}"."support_tickets"
            ${where}
            ORDER BY created_at DESC

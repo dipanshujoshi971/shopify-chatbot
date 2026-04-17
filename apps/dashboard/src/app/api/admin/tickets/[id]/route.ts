@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSuperAdmin } from '@/lib/admin';
 import { db, pgPool } from '@/lib/db';
 import { merchants } from '@chatbot/db';
-import { sendTicketReplyEmail } from '@/lib/email';
+import { emitRealtime } from '@/lib/internal-emit';
 
 export async function GET(
   _request: NextRequest,
@@ -13,7 +13,6 @@ export async function GET(
 
   const { id } = await params;
 
-  // Search across all merchant schemas for this ticket
   const stores = await db.select({ id: merchants.id, shopDomain: merchants.shopDomain }).from(merchants);
 
   for (const store of stores) {
@@ -21,7 +20,8 @@ export async function GET(
     try {
       const rows = await pgPool.unsafe(
         `SELECT id, subject, customer_email, customer_message, status, ticket_type,
-                priority, conversation_id, replies, assignee, created_at, updated_at
+                priority, conversation_id, replies, assignee, created_at, updated_at,
+                admin_unread_count, merchant_unread_count
            FROM "tenant_${sn}"."support_tickets"
           WHERE id = $1`,
         [id],
@@ -68,7 +68,6 @@ export async function PUT(
     reply?: { message: string };
   };
 
-  // Find which merchant schema has this ticket
   const stores = await db
     .select({ id: merchants.id, shopDomain: merchants.shopDomain })
     .from(merchants);
@@ -77,14 +76,21 @@ export async function PUT(
     const sn = store.id.replace('store_', '').replace(/[^a-z0-9_]/g, '_');
     try {
       const check = await pgPool.unsafe(
-        `SELECT id, customer_email, subject FROM "tenant_${sn}"."support_tickets" WHERE id = $1`,
+        `SELECT id FROM "tenant_${sn}"."support_tickets" WHERE id = $1`,
         [id],
       );
 
       if (!check[0]) continue;
-      const existing = check[0] as { customer_email?: string; subject?: string };
 
-      // Build update
+      // Defensive: a merchant who hasn't visited their tickets page since
+      // deploy won't have the unread columns yet. ADD IF NOT EXISTS is a
+      // cheap no-op once the columns are present.
+      await pgPool.unsafe(
+        `ALTER TABLE "tenant_${sn}"."support_tickets"
+         ADD COLUMN IF NOT EXISTS admin_unread_count INT NOT NULL DEFAULT 0,
+         ADD COLUMN IF NOT EXISTS merchant_unread_count INT NOT NULL DEFAULT 0`,
+      );
+
       const updates: string[] = ['updated_at = now()'];
       const vals: unknown[] = [];
       let idx = 1;
@@ -101,8 +107,12 @@ export async function PUT(
         updates.push(`priority = $${idx++}`);
         vals.push(body.priority);
       }
+
+      let replyObj:
+        | { id: string; author: string; message: string; createdAt: string }
+        | null = null;
       if (body.reply) {
-        const replyObj = {
+        replyObj = {
           id: `reply_${Date.now()}`,
           author: 'Super Admin',
           message: body.reply.message,
@@ -110,6 +120,7 @@ export async function PUT(
         };
         updates.push(`replies = COALESCE(replies, '[]'::jsonb) || $${idx++}::jsonb`);
         vals.push(JSON.stringify(replyObj));
+        updates.push(`merchant_unread_count = COALESCE(merchant_unread_count, 0) + 1`);
       }
 
       vals.push(id);
@@ -121,17 +132,12 @@ export async function PUT(
         vals as any[],
       );
 
-      if (body.reply && existing.customer_email) {
-        const shopDomain = store.shopDomain ?? '';
-        const storeName =
-          shopDomain.replace('.myshopify.com', '').replace(/-/g, ' ') || 'Store';
-        sendTicketReplyEmail({
-          customerEmail: existing.customer_email,
-          storeName,
-          ticketSubject: existing.subject || 'Your Support Ticket',
-          replyMessage: body.reply.message,
+      if (replyObj) {
+        emitRealtime(`tenant:${store.id}`, 'ticket:reply', {
           ticketId: id,
-        }).catch((err) => console.error('[admin-ticket-reply] email failed:', err));
+          from: 'admin',
+          reply: replyObj,
+        });
       }
 
       return NextResponse.json({ success: true });
