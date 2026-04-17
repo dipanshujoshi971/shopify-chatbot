@@ -322,6 +322,7 @@ export const WIDGET_CSS = /* css */ `
   .sb-messages {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 20px 16px;
     display: flex;
     flex-direction: column;
@@ -329,13 +330,10 @@ export const WIDGET_CSS = /* css */ `
     scroll-behavior: smooth;
     background: var(--sb-bg-elevated);
     overscroll-behavior-y: contain;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
   }
-  .sb-messages::-webkit-scrollbar { width: 4px; }
-  .sb-messages::-webkit-scrollbar-track { background: transparent; }
-  .sb-messages::-webkit-scrollbar-thumb {
-    background: var(--sb-border);
-    border-radius: 2px;
-  }
+  .sb-messages::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
   /* ── Message bubbles ───────────────────────────────────────────── */
   .sb-msg {
@@ -449,11 +447,12 @@ export const WIDGET_CSS = /* css */ `
     border: 1px solid var(--sb-border-light);
     border-radius: 20px;
     border-bottom-left-radius: 6px;
-    padding: 14px 18px;
-    display: flex;
-    gap: 5px;
+    padding: 12px 16px;
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
     align-items: center;
-    margin-left: 42px;
+    max-width: 88%;
     box-shadow: 0 1px 4px rgba(0,0,0,.04);
   }
   .sb-typing span:not(.sb-typing-label) {
@@ -463,6 +462,7 @@ export const WIDGET_CSS = /* css */ `
     background: var(--sb-accent);
     opacity: .5;
     animation: sb-bounce .9s infinite;
+    flex-shrink: 0;
   }
   .sb-typing span:not(.sb-typing-label):nth-last-child(2) { animation-delay: .15s; }
   .sb-typing span:not(.sb-typing-label):last-child { animation-delay: .3s; }
@@ -471,7 +471,9 @@ export const WIDGET_CSS = /* css */ `
     color: var(--sb-text-muted);
     font-weight: 500;
     margin-right: 2px;
-    white-space: nowrap;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.4;
   }
 
   /* ── Consent banner ────────────────────────────────────────────── */
