@@ -2,7 +2,6 @@ import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { getMerchant, safeName } from '@/lib/merchant';
 import { pgPool } from '@/lib/db';
-import { sendTicketReplyEmail } from '@/lib/email';
 
 export async function GET(
   _req: NextRequest,
@@ -107,29 +106,8 @@ export async function PUT(
       vals,
     );
 
-    // Send email notification to customer if this is a reply
-    if (body.reply) {
-      try {
-        const ticketRows = await pgPool.unsafe(
-          `SELECT customer_email, subject FROM "tenant_${sn}"."support_tickets" WHERE id = $1`,
-          [id],
-        );
-        const ticket = ticketRows[0] as any;
-        if (ticket?.customer_email) {
-          const shopDomain = merchant.shopDomain ?? '';
-          const storeName = shopDomain.replace('.myshopify.com', '').replace(/-/g, ' ');
-          sendTicketReplyEmail({
-            customerEmail: ticket.customer_email,
-            storeName: storeName || 'Store',
-            ticketSubject: ticket.subject || 'Your Support Ticket',
-            replyMessage: body.reply.message,
-            ticketId: id,
-          }).catch(() => {}); // Fire and forget — don't block the response
-        }
-      } catch {
-        // Email failure shouldn't block ticket update
-      }
-    }
+    // Email notifications are sent from the super-admin side only for now.
+    // Merchant-side email provider integration will be added later.
 
     return NextResponse.json({ success: true });
   } catch {

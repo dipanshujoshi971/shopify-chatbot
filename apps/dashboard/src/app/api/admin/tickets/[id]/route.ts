@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSuperAdmin } from '@/lib/admin';
 import { db, pgPool } from '@/lib/db';
 import { merchants } from '@chatbot/db';
+import { sendTicketReplyEmail } from '@/lib/email';
 
 export async function GET(
   _request: NextRequest,
@@ -68,17 +69,20 @@ export async function PUT(
   };
 
   // Find which merchant schema has this ticket
-  const stores = await db.select({ id: merchants.id }).from(merchants);
+  const stores = await db
+    .select({ id: merchants.id, shopDomain: merchants.shopDomain })
+    .from(merchants);
 
   for (const store of stores) {
     const sn = store.id.replace('store_', '').replace(/[^a-z0-9_]/g, '_');
     try {
       const check = await pgPool.unsafe(
-        `SELECT id FROM "tenant_${sn}"."support_tickets" WHERE id = $1`,
+        `SELECT id, customer_email, subject FROM "tenant_${sn}"."support_tickets" WHERE id = $1`,
         [id],
       );
 
       if (!check[0]) continue;
+      const existing = check[0] as { customer_email?: string; subject?: string };
 
       // Build update
       const updates: string[] = ['updated_at = now()'];
@@ -116,6 +120,19 @@ export async function PUT(
           WHERE id = $${idx}`,
         vals as any[],
       );
+
+      if (body.reply && existing.customer_email) {
+        const shopDomain = store.shopDomain ?? '';
+        const storeName =
+          shopDomain.replace('.myshopify.com', '').replace(/-/g, ' ') || 'Store';
+        sendTicketReplyEmail({
+          customerEmail: existing.customer_email,
+          storeName,
+          ticketSubject: existing.subject || 'Your Support Ticket',
+          replyMessage: body.reply.message,
+          ticketId: id,
+        }).catch((err) => console.error('[admin-ticket-reply] email failed:', err));
+      }
 
       return NextResponse.json({ success: true });
     } catch {
