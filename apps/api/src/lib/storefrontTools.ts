@@ -651,9 +651,6 @@ function buildCartSummary(cart: ParsedCartResult): string {
   if (cart.cost?.totalAmount) {
     lines.push(`Total: ${fmt(cart.cost.totalAmount.amount, cart.cost.totalAmount.currencyCode)}`);
   }
-  if (cart.checkoutUrl) {
-    lines.push(`Checkout: ${cart.checkoutUrl}`);
-  }
 
   return lines.join('\n');
 }

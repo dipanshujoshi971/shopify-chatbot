@@ -483,9 +483,21 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
           'chat_request_finish',
         );
 
-        // ── 13. Return consistent JSON response ─────────────────────────────
+        // ── 13. Sanitize & return ───────────────────────────────────────────
+        // Safety net: if a cart or order card is attached, the card already
+        // renders checkout / tracking links. Strip any raw URLs the LLM
+        // echoed into the text so we don't duplicate them as ugly wrapped text.
+        const sanitizedText = (cart || order)
+          ? responseText
+              .replace(/\bhttps?:\/\/\S+/gi, '')
+              .replace(/[ \t]{2,}/g, ' ')
+              .replace(/\n{3,}/g, '\n\n')
+              .replace(/[:\-–—]\s*(?=\n|$)/g, '')
+              .trim()
+          : responseText;
+
         return reply.send({
-          text:           responseText,
+          text:           sanitizedText,
           products,
           cart,
           order,
