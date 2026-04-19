@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Store, Loader2, Sparkles, ArrowRight, ShieldCheck, Zap, Globe } from 'lucide-react';
+import { Store, Loader2, ArrowRight, ShieldCheck, Zap, Globe } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { LogoMark } from '@/components/logo';
 
 export function ConnectStoreForm() {
   const router = useRouter();
@@ -55,9 +56,8 @@ export function ConnectStoreForm() {
       <div className="w-full max-w-md relative z-10">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center mx-auto mb-5 shadow-xl shadow-primary/25">
-            <Sparkles className="w-8 h-8 text-white" />
-            <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/20 to-transparent" />
+          <div className="relative mx-auto mb-5 flex w-16 h-16 items-center justify-center">
+            <LogoMark size={64} />
             <div className="absolute -inset-1 rounded-2xl bg-primary/20 blur-lg -z-10" />
           </div>
           <h1 className="text-2xl font-bold text-foreground tracking-tight">Connect Your Store</h1>

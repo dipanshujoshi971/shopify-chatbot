@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(npm run *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "WebFetch(domain:api.anthropic.com)",
+      "Read(//tmp/design/**)",
+      "Read(//tmp/design/shopsifu/**)",
+      "Bash(cygpath -w /tmp/design/shopsifu/project/)"
     ]
   }
 }

@@ -28,6 +28,7 @@ import {
 import { cn } from '@/lib/utils';
 import { UserButton } from '@clerk/nextjs';
 import { SHOW_BILLING } from '@/lib/flags';
+import { LogoMark } from '@/components/logo';
 
 /* ─── Types ─── */
 interface NavItem {
@@ -336,9 +337,7 @@ export function MobileNav({ shopDomain }: { shopDomain?: string }) {
     <>
       <div className="lg:hidden flex items-center justify-between px-4 py-3 glass border-b border-glass-border">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center">
-            <Sparkles className="w-3.5 h-3.5 text-white" />
-          </div>
+          <LogoMark size={28} />
           <span className="text-sm font-bold text-foreground">ShopSifu</span>
         </div>
         <button
@@ -355,9 +354,7 @@ export function MobileNav({ shopDomain }: { shopDomain?: string }) {
           <div className="relative w-[280px] min-h-screen glass-sidebar overflow-y-auto">
             <div className="p-4 border-b border-sidebar-border flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center">
-                  <Sparkles className="w-4 h-4 text-white" />
-                </div>
+                <LogoMark size={32} />
                 <span className="text-sm font-bold text-sidebar-accent-foreground">ShopSifu</span>
               </div>
               <button

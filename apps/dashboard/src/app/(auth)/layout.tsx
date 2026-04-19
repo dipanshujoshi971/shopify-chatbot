@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge"
-import { Sparkles, Zap, ShoppingCart, Package, Brain, ArrowRight } from "lucide-react"
+import { Zap, ShoppingCart, Package, Brain, ArrowRight } from "lucide-react"
+import { LogoMark } from "@/components/logo"
 
 const features = [
   { icon: Zap, title: "Live product data", desc: "Always synced with your Shopify catalog", color: "text-emerald-400 bg-emerald-400/10" },
@@ -47,10 +48,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
-          <div className="relative w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/25">
-            <Sparkles className="w-5 h-5 text-white" />
-            <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-white/20 to-transparent" />
-          </div>
+          <LogoMark size={40} />
           <span className="text-lg font-bold tracking-tight text-white">ShopSifu</span>
           <Badge variant="outline" className="ml-1 text-emerald-400 border-emerald-400/20 bg-emerald-400/5 text-[10px] font-semibold tracking-wider uppercase">
             Beta
@@ -118,9 +116,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
         {/* Mobile logo */}
         <div className="lg:hidden flex items-center gap-2.5 mb-8 relative z-10">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-            <Sparkles className="w-4.5 h-4.5 text-white" />
-          </div>
+          <LogoMark size={36} />
           <span className="text-base font-bold text-foreground">ShopSifu</span>
         </div>
 
