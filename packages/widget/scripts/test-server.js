@@ -343,7 +343,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════╗
-║   Shopbot Widget Test Server                     ║
+║   ShopSifu Widget Test Server                    ║
 ╠══════════════════════════════════════════════════╣
 ║   Storefront → http://localhost:${PORT}              ║
 ║   Chat API   → POST /widget/chat  (JSON)        ║

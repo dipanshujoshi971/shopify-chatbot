@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { estimateCost, estimateEmbeddingCost, formatCost } from '@/lib/token-cost';
+import { SHOW_BILLING } from '@/lib/flags';
 
 interface MerchantDetail {
   id: string;
@@ -161,6 +162,7 @@ export default function AdminMerchantDetailPage() {
               )}>
                 {merchant.status}
               </span>
+              {SHOW_BILLING && (
               <span className={cn('text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize flex items-center gap-1', {
                 'bg-blue-500/15 text-blue-500': merchant.planId === 'starter',
                 'bg-emerald-500/15 text-emerald-500': merchant.planId === 'growth',
@@ -170,6 +172,7 @@ export default function AdminMerchantDetailPage() {
                 <Crown className="w-3 h-3" />
                 {merchant.planId}
               </span>
+              )}
             </div>
           </div>
         </div>

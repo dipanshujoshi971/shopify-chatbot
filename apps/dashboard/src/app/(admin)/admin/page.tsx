@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { estimateCost, formatCost } from '@/lib/token-cost';
+import { SHOW_BILLING } from '@/lib/flags';
 
 interface PlatformStats {
   totalMerchants: number;
@@ -194,6 +195,7 @@ export default function AdminOverviewPage() {
 
       <div className="grid lg:grid-cols-5 gap-6">
         {/* Plan Distribution */}
+        {SHOW_BILLING && (
         <div className="lg:col-span-2 glass-card p-6">
           <h3 className="text-sm font-semibold text-foreground mb-4">Plan Distribution</h3>
           <div className="space-y-3">
@@ -222,9 +224,10 @@ export default function AdminOverviewPage() {
             })}
           </div>
         </div>
+        )}
 
         {/* Quick Actions */}
-        <div className="lg:col-span-3 glass-card p-6">
+        <div className={cn('glass-card p-6', SHOW_BILLING ? 'lg:col-span-3' : 'lg:col-span-5')}>
           <h3 className="text-sm font-semibold text-foreground mb-4">Quick Actions</h3>
           <div className="grid sm:grid-cols-2 gap-3">
             {[

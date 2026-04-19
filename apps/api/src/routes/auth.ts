@@ -80,7 +80,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     // 5 — Register webhooks (use raw token — needed for Admin API call)
     try {
-      await registerWebhooks(shop, accessToken);
+      await registerWebhooks(shop, accessToken, request.log);
       request.log.info({ shop }, 'Webhooks registered');
     } catch (err) {
       request.log.warn({ shop, err }, 'Failed to register some webhooks');

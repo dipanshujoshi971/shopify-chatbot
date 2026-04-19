@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { auth } from '@clerk/nextjs/server';
+import { SHOW_BILLING } from '@/lib/flags';
 import {
   Sparkles,
   Zap,
@@ -14,7 +15,7 @@ import {
   Check,
 } from 'lucide-react';
 
-const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat';
+const APP_NAME = 'ShopSifu';
 
 const features = [
   {
@@ -123,9 +124,11 @@ export default async function LandingPage() {
           <a href="#features" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
             Features
           </a>
-          <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-            Pricing
-          </a>
+          {SHOW_BILLING && (
+            <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+              Pricing
+            </a>
+          )}
           <a href="#faq" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
             FAQ
           </a>
@@ -270,6 +273,7 @@ export default async function LandingPage() {
       </section>
 
       {/* Pricing */}
+      {SHOW_BILLING && (
       <section id="pricing" className="relative z-10 max-w-7xl mx-auto px-6 lg:px-8 py-24">
         <div className="text-center mb-16">
           <p className="text-emerald-400 text-xs font-semibold tracking-[0.25em] uppercase mb-3">
@@ -342,6 +346,7 @@ export default async function LandingPage() {
           ))}
         </div>
       </section>
+      )}
 
       {/* FAQ */}
       <section id="faq" className="relative z-10 max-w-4xl mx-auto px-6 lg:px-8 py-24">
@@ -362,7 +367,7 @@ export default async function LandingPage() {
             },
             {
               q: 'What AI model powers the chatbot?',
-              a: 'OpenAI GPT-4-class models by default, with optional routing to custom providers for enterprise plans.',
+              a: 'OpenAI GPT-4-class models by default, with optional routing to custom providers on request.',
             },
             {
               q: 'Can I customize the bot\u2019s personality and responses?',

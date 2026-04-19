@@ -31,17 +31,17 @@ export async function fetchWidgetConfig(
       headers: { 'X-Widget-Key': apiKey },
     });
     if (!res.ok) {
-      console.warn(`[Shopbot] Config fetch failed: HTTP ${res.status} ${res.statusText}`);
+      console.warn(`[ShopSifu] Config fetch failed: HTTP ${res.status} ${res.statusText}`);
       try {
         const errBody = await res.text();
-        console.warn(`[Shopbot] Config response:`, errBody.slice(0, 300));
+        console.warn(`[ShopSifu] Config response:`, errBody.slice(0, 300));
       } catch { /* ignore */ }
       return DEFAULT_CONFIG;
     }
     const data = await res.json() as RemoteConfig;
     return { ...DEFAULT_CONFIG, ...data };
   } catch (err) {
-    console.warn('[Shopbot] Config fetch error (falling back to defaults):', err);
+    console.warn('[ShopSifu] Config fetch error (falling back to defaults):', err);
     return DEFAULT_CONFIG;
   }
 }

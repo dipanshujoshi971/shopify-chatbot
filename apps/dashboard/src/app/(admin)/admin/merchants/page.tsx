@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { estimateCost, formatCost } from '@/lib/token-cost';
+import { SHOW_BILLING } from '@/lib/flags';
 
 interface MerchantRow {
   id: string;
@@ -152,7 +153,7 @@ export default function AdminMerchantsPage() {
                 <tr className="border-b border-[var(--glass-border)]">
                   <th className="text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-5 py-3">Store</th>
                   <th className="text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-5 py-3">Status</th>
-                  <th className="text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-5 py-3">Plan</th>
+                  {SHOW_BILLING && <th className="text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-5 py-3">Plan</th>}
                   <th className="text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-5 py-3">
                     <span className="flex items-center justify-end gap-1">
                       <ArrowDownToLine className="w-3 h-3" />Input
@@ -194,12 +195,14 @@ export default function AdminMerchantsPage() {
                           {m.status}
                         </span>
                       </td>
+                      {SHOW_BILLING && (
                       <td className="px-5 py-3.5">
                         <span className={cn('text-[11px] font-semibold px-2.5 py-1 rounded-full capitalize flex items-center gap-1 w-fit', PLAN_STYLES[m.planId] ?? 'bg-muted text-muted-foreground')}>
                           <Crown className="w-3 h-3" />
                           {m.planId}
                         </span>
                       </td>
+                      )}
                       <td className="px-5 py-3.5 text-right">
                         <div>
                           <span className="text-sm font-semibold text-blue-500">{m.totalInputTokens.toLocaleString()}</span>

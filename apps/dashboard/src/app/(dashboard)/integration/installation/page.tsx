@@ -70,7 +70,7 @@ export default function InstallationPage() {
       {/* Page intro */}
       <div>
         <h2 className="text-xl font-bold text-foreground">Install Your Chatbot</h2>
-        <p className="text-sm text-muted-foreground mt-1">Enable {process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'} on your Shopify store in one click</p>
+        <p className="text-sm text-muted-foreground mt-1">Enable ShopSifu on your Shopify store in one click</p>
       </div>
 
       {/* Theme Editor — primary action */}
@@ -85,7 +85,7 @@ export default function InstallationPage() {
           </div>
         </div>
         <p className="text-sm text-muted-foreground mb-5">
-          Click the button below to open your Shopify theme editor. Find <strong>{process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'} AI</strong> in the App embeds section and toggle it on. Your API key is configured automatically.
+          Click the button below to open your Shopify theme editor. Find <strong>ShopSifu AI</strong> in the App embeds section and toggle it on. Your API key is configured automatically.
         </p>
         <button
           onClick={handleOpenThemeEditor}

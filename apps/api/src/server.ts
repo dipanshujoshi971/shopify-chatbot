@@ -29,7 +29,31 @@ const app = Fastify({
 
 // ─── Plugins ──────────────────────────────────────────────────────────────────
 
-await app.register(helmet);
+await app.register(helmet, {
+  // Enforce HTTPS for 2 years; include subdomains; preload-ready.
+  strictTransportSecurity: {
+    maxAge: 63072000,
+    includeSubDomains: true,
+    preload: true,
+  },
+  // Browsers shouldn't sniff MIME types on our responses.
+  xContentTypeOptions: true,
+  // We don't iframe anywhere except as required by Shopify admin; deny by default.
+  frameguard: { action: 'deny' },
+  referrerPolicy: { policy: 'no-referrer' },
+  // CSP is off by default to avoid breaking the embedded widget; set at CDN/proxy layer.
+  contentSecurityPolicy: false,
+});
+
+// Force HTTPS in production (behind TLS-terminating proxy; trust X-Forwarded-Proto).
+if (env.NODE_ENV === 'production') {
+  app.addHook('onRequest', async (request, reply) => {
+    const proto = (request.headers['x-forwarded-proto'] as string | undefined) ?? request.protocol;
+    if (proto !== 'https') {
+      return reply.redirect(301, `https://${request.hostname}${request.url}`);
+    }
+  });
+}
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 //

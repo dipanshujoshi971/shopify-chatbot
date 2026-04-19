@@ -1,7 +1,7 @@
 /**
  * packages/widget/src/components/widget.tsx
  *
- * Root Preact component for the Shopbot chat widget.
+ * Root Preact component for the ShopSifu chat widget.
  *
  * Features:
  *   - Remote appearance config (theme, greeting, position)
@@ -622,7 +622,7 @@ export function Widget({ config }: WidgetProps) {
               </div>
 
               <div class="sb-powered-by">
-                Powered by <strong>Shopbot AI</strong>
+                Powered by <strong>ShopSifu AI</strong>
               </div>
             </>
           )}

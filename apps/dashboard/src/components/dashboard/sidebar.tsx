@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UserButton } from '@clerk/nextjs';
+import { SHOW_BILLING } from '@/lib/flags';
 
 /* ─── Types ─── */
 interface NavItem {
@@ -222,13 +223,13 @@ export function Sidebar({ shopDomain, planId, userName, userImageUrl, isAdmin, c
 
         {!collapsed && (
           <div className="min-w-0 flex-1">
-            {planId && (
+            {SHOW_BILLING && planId && (
               <p className="text-[10px] text-primary font-semibold uppercase tracking-wider">
                 {planId} plan
               </p>
             )}
             <p className="text-sm font-bold text-sidebar-accent-foreground tracking-tight truncate">
-              {userName || process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'}
+              {userName || 'ShopSifu'}
             </p>
           </div>
         )}
@@ -338,7 +339,7 @@ export function MobileNav({ shopDomain }: { shopDomain?: string }) {
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center">
             <Sparkles className="w-3.5 h-3.5 text-white" />
           </div>
-          <span className="text-sm font-bold text-foreground">{process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'}</span>
+          <span className="text-sm font-bold text-foreground">ShopSifu</span>
         </div>
         <button
           onClick={() => setOpen(!open)}
@@ -357,7 +358,7 @@ export function MobileNav({ shopDomain }: { shopDomain?: string }) {
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-emerald-600 flex items-center justify-center">
                   <Sparkles className="w-4 h-4 text-white" />
                 </div>
-                <span className="text-sm font-bold text-sidebar-accent-foreground">{process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'}</span>
+                <span className="text-sm font-bold text-sidebar-accent-foreground">ShopSifu</span>
               </div>
               <button
                 onClick={() => setOpen(false)}

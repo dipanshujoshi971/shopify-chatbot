@@ -78,6 +78,31 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
 
       const safeName = tenantId.replace('store_', '').replace(/[^a-z0-9_]/g, '_');
 
+      // Prevent caches/CDNs from storing chat responses.
+      reply.header('Cache-Control', 'no-store');
+
+      // ── Rate limit: per-tenant + per-IP, sliding 60s window ───────────────
+      try {
+        const ip = request.ip || 'unknown';
+        const keys = [
+          `rl:chat:tenant:${tenantId}`,
+          `rl:chat:ip:${tenantId}:${ip}`,
+        ];
+        const limits = [600, 60]; // tenant 600/min, per-IP 60/min
+        for (let i = 0; i < keys.length; i++) {
+          const n = await valkey.incr(keys[i]);
+          if (n === 1) await valkey.expire(keys[i], 60);
+          if (n > limits[i]) {
+            return reply.code(429).send({
+              error: 'Rate limit exceeded',
+              message: 'Too many requests. Please wait a moment and try again.',
+            });
+          }
+        }
+      } catch (err) {
+        request.log.warn({ err }, 'chat: rate limit check failed, allowing request');
+      }
+
       // ── Fast Valkey pre-check ─────────────────────────────────────────────
       if (body.conversationId) {
         try {
@@ -301,6 +326,8 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
       request.log.info({ tenantId, conversationId, ...llmInfo }, 'chat_request_start');
 
       // ── 9. Call LLM via generateText (non-streaming, consistent output) ──
+      const llmAbort = new AbortController();
+      const llmTimer = setTimeout(() => llmAbort.abort(), 45_000);
       try {
         const result = await generateText({
           model:    getLLMModel('fast'),
@@ -311,6 +338,7 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
           ],
           tools,
           maxSteps: HARD_LIMITS.maxSteps,
+          abortSignal: llmAbort.signal,
         });
 
         // ── 10. Build consistent JSON response from tool results ────────────
@@ -505,14 +533,19 @@ const chatRoutes: FastifyPluginAsync = async (app) => {
         });
 
       } catch (err) {
-        request.log.error({ err, tenantId, conversationId }, 'chat: generateText failed');
-        return reply.code(500).send({
-          text:           'Something went wrong. Please try again.',
+        const isTimeout = llmAbort.signal.aborted;
+        request.log.error({ err, tenantId, conversationId, isTimeout }, 'chat: generateText failed');
+        return reply.code(isTimeout ? 504 : 500).send({
+          text: isTimeout
+            ? 'The assistant took too long to respond. Please try again.'
+            : 'Something went wrong. Please try again.',
           products:       [],
           cart:           null,
           order:          null,
           conversationId,
         });
+      } finally {
+        clearTimeout(llmTimer);
       }
     },
   );

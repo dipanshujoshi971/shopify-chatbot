@@ -240,17 +240,15 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
           messages:      messages.length,
           tickets:       tickets.length,
         },
+        export: customerData,
       }),
     });
 
-    // Shopify expects a 200 response — the data payload is logged and available
-    // for the merchant to retrieve via the admin data export endpoint.
-    // Store the export in audit_log metadata for retrieval.
     request.log.info(
       { shop, customerId: customer.id, records: conversations.length + messages.length + tickets.length },
       'Customer data export prepared',
     );
-    return reply.code(200).send({ customer: customerData });
+    return reply.code(200).send();
   });
 
   // Note: Product discovery uses Shopify Storefront MCP (real-time catalog data).

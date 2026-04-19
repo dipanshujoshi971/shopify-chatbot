@@ -1,7 +1,7 @@
 /**
  * packages/widget/src/types.ts
  *
- * All shared types for the Shopbot widget.
+ * All shared types for the ShopSifu widget.
  * No runtime cost — TypeScript only.
  */
 

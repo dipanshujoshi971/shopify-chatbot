@@ -112,7 +112,7 @@ export function requestConsent(): Promise<ConsentStatus> {
         { analyticsProcessingAllowed: true, marketingAllowed: false },
         (err) => {
           if (err) {
-            console.warn('[shopbot] Consent API error:', err);
+            console.warn('[shopsifu] Consent API error:', err);
             resolve('unknown');
           }
         },

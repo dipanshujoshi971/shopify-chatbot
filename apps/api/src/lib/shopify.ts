@@ -10,12 +10,16 @@ const SHOPIFY_API_VERSION = '2026-04';
 export function buildInstallUrl(shop: string, state: string): string {
   const redirectUri = `${env.APP_URL}/api/auth/shopify/callback`;
 
+  // NOTE: We intentionally do NOT pass `grant_options[]=per-user` here.
+  // Without it, Shopify returns an OFFLINE access token (prefix `shpat_`) that
+  // is permanent until the merchant uninstalls. With `per-user`, Shopify
+  // returns an ONLINE token (prefix `shpua_`) that expires in ~24 hours — that
+  // would break background order lookups after a day.
   const params = new URLSearchParams({
     client_id: env.SHOPIFY_CLIENT_ID,
     scope: SHOPIFY_SCOPES,
     redirect_uri: redirectUri,
     state,
-    'grant_options[]': 'per-user',
   });
 
   return `https://${shop}/admin/oauth/authorize?${params}`;
@@ -110,7 +114,8 @@ export function decryptToken(encryptedToken: string): string {
 // configured once in the Shopify Partner Dashboard — not registered per-merchant.
 export async function registerWebhooks(
   shop: string,
-  accessToken: string
+  accessToken: string,
+  logger?: { warn: (obj: object, msg: string) => void }
 ): Promise<void> {
   const appUrl = env.APP_URL;
 
@@ -156,8 +161,7 @@ export async function registerWebhooks(
     );
 
     if (!res.ok) {
-      // Log but don't throw — a failed webhook registration shouldn't block install
-      console.warn(`Failed to register webhook ${topic}: ${res.statusText}`);
+      logger?.warn({ topic, status: res.statusText }, 'Failed to register webhook');
     }
   }
 }

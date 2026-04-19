@@ -51,7 +51,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
             <Sparkles className="w-5 h-5 text-white" />
             <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-white/20 to-transparent" />
           </div>
-          <span className="text-lg font-bold tracking-tight text-white">{process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'}</span>
+          <span className="text-lg font-bold tracking-tight text-white">ShopSifu</span>
           <Badge variant="outline" className="ml-1 text-emerald-400 border-emerald-400/20 bg-emerald-400/5 text-[10px] font-semibold tracking-wider uppercase">
             Beta
           </Badge>
@@ -121,7 +121,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
             <Sparkles className="w-4.5 h-4.5 text-white" />
           </div>
-          <span className="text-base font-bold text-foreground">{process.env.NEXT_PUBLIC_APP_NAME || 'ShopChat'}</span>
+          <span className="text-base font-bold text-foreground">ShopSifu</span>
         </div>
 
         <div className="relative z-10 w-full max-w-sm">

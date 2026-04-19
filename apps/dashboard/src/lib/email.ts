@@ -8,7 +8,7 @@
  */
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? 'support@shopbot.ai';
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? 'support@shopsifu.com';
 
 interface EmailParams {
   to: string;
@@ -91,7 +91,7 @@ export async function sendTicketReplyEmail(params: {
           <p style="font-size:12px;color:#9ca3af;margin:12px 0 0;">Ticket ID: ${ticketId}</p>
         </div>
         <p style="font-size:11px;color:#9ca3af;text-align:center;margin-top:16px;">
-          Powered by Shopbot AI
+          Powered by ShopSifu AI
         </p>
       </div>
     `,

@@ -34,7 +34,7 @@ const envSchema = z
     SHOPIFY_CLIENT_ID: z.string(),
     SHOPIFY_CLIENT_SECRET: z.string(),
     SHOPIFY_SCOPES: z.string().default(
-      'read_products,read_orders,write_orders,read_customers'
+      'read_products,read_orders,read_customers'
     ),
 
     // ── Azure OpenAI (used for both LLM and embeddings) ──────────────

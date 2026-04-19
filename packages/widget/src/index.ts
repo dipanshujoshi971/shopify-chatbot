@@ -38,7 +38,7 @@ declare const __WIDGET_VERSION__: string;
 
 const INIT_FLAG = '__shopbot_initialized__';
 if ((window as any)[INIT_FLAG]) {
-  throw new Error('[shopbot] Widget already initialized. Remove duplicate script tags.');
+  throw new Error('[shopsifu] Widget already initialized. Remove duplicate script tags.');
 }
 (window as any)[INIT_FLAG] = true;
 
@@ -53,7 +53,7 @@ function readConfig(): { config: WidgetConfig; needsKeyResolve: boolean } | null
   );
 
   if (scripts.length === 0) {
-    console.warn('[shopbot] No script tag with data-shop-domain found.');
+    console.warn('[shopsifu] No script tag with data-shop-domain found.');
     return null;
   }
 
@@ -63,7 +63,7 @@ function readConfig(): { config: WidgetConfig; needsKeyResolve: boolean } | null
   const shopDomain = script.dataset.shopDomain?.trim();
 
   if (!shopDomain) {
-    console.error('[shopbot] data-shop-domain is required.');
+    console.error('[shopsifu] data-shop-domain is required.');
     return null;
   }
 
@@ -105,13 +105,13 @@ async function resolveApiKey(apiBaseUrl: string, shopDomain: string): Promise<st
       `${apiBaseUrl}/widget/resolve-key?shop=${encodeURIComponent(shopDomain)}`,
     );
     if (!res.ok) {
-      console.error(`[shopbot] Failed to resolve API key: HTTP ${res.status}`);
+      console.error(`[shopsifu] Failed to resolve API key: HTTP ${res.status}`);
       return null;
     }
     const data = await res.json() as { apiKey?: string };
     return data.apiKey || null;
   } catch (err) {
-    console.error('[shopbot] Failed to resolve API key:', err);
+    console.error('[shopsifu] Failed to resolve API key:', err);
     return null;
   }
 }
@@ -144,7 +144,7 @@ function mount(config: WidgetConfig): void {
 
   if (import.meta.env.DEV) {
     console.log(
-      `[shopbot] v${__WIDGET_VERSION__} mounted`,
+      `[shopsifu] v${__WIDGET_VERSION__} mounted`,
       { apiKey: config.apiKey.slice(0, 12) + '...', shopDomain: config.shopDomain },
     );
   }
@@ -163,7 +163,7 @@ async function init(): Promise<void> {
   if (needsKeyResolve) {
     const resolvedKey = await resolveApiKey(config.apiBaseUrl, config.shopDomain);
     if (!resolvedKey) {
-      console.error('[shopbot] Could not resolve API key for shop:', config.shopDomain);
+      console.error('[shopsifu] Could not resolve API key for shop:', config.shopDomain);
       return;
     }
     config.apiKey = resolvedKey;
