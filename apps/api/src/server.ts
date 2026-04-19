@@ -50,7 +50,7 @@ if (env.NODE_ENV === 'production') {
   app.addHook('onRequest', async (request, reply) => {
     const proto = (request.headers['x-forwarded-proto'] as string | undefined) ?? request.protocol;
     if (proto !== 'https') {
-      return reply.redirect(301, `https://${request.hostname}${request.url}`);
+      return reply.redirect(`https://${request.hostname}${request.url}`, 301);
     }
   });
 }
