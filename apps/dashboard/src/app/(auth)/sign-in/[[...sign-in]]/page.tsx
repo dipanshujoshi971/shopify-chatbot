@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useSignIn, useClerk } from '@clerk/nextjs'
 import { isClerkAPIResponseError } from '@clerk/nextjs/errors'
 import {
@@ -67,7 +66,6 @@ function pickSecondFactor(
 export default function SignInPage() {
   const { signIn, fetchStatus } = useSignIn()
   const clerk = useClerk()
-  const router = useRouter()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -91,7 +89,9 @@ export default function SignInPage() {
       null
     if (!createdSessionId) return false
     await clerk.setActive({ session: createdSessionId })
-    router.push('/dashboard')
+    // Hard navigate so the session cookie is guaranteed to be attached to the
+    // /dashboard request and Next.js doesn't serve a cached (anonymous) RSC.
+    window.location.assign('/dashboard')
     return true
   }
 

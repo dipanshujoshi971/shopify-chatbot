@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useSignUp, useClerk } from '@clerk/nextjs'
 import { isClerkAPIResponseError } from '@clerk/nextjs/errors'
 import {
@@ -26,7 +25,6 @@ function extractError(err: unknown): string {
 export default function SignUpPage() {
   const { signUp, fetchStatus } = useSignUp()
   const clerk = useClerk()
-  const router = useRouter()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -98,7 +96,7 @@ export default function SignUpPage() {
       }
 
       await clerk.setActive({ session: createdSessionId })
-      router.push('/dashboard')
+      window.location.assign('/dashboard')
     } catch (err) {
       setError(extractError(err))
     } finally {

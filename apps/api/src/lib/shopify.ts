@@ -25,10 +25,20 @@ export function buildInstallUrl(shop: string, state: string): string {
   return `https://${shop}/admin/oauth/authorize?${params}`;
 }
 
+// Shape of Shopify's expiring-token response (Dec 2025+).
+// `expiring=1` must be sent in the request body to receive these fields.
+export interface ShopifyTokenResponse {
+  access_token: string;
+  expires_in: number;              // access token lifetime in seconds (~3600)
+  refresh_token: string;
+  refresh_token_expires_in: number; // refresh token lifetime in seconds (~7776000 = 90d)
+  scope: string;
+}
+
 export async function exchangeCodeForToken(
   shop: string,
   code: string
-): Promise<string> {
+): Promise<ShopifyTokenResponse> {
   const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -36,6 +46,7 @@ export async function exchangeCodeForToken(
       client_id: env.SHOPIFY_CLIENT_ID,
       client_secret: env.SHOPIFY_CLIENT_SECRET,
       code,
+      expiring: '1',
     }),
   });
 
@@ -43,8 +54,41 @@ export async function exchangeCodeForToken(
     throw new Error(`Failed to exchange code: ${response.statusText}`);
   }
 
-  const data = await response.json() as { access_token: string };
-  return data.access_token;
+  const data = await response.json() as ShopifyTokenResponse;
+  if (!data.refresh_token || !data.expires_in) {
+    throw new Error(
+      'Shopify did not return an expiring token. Check that `expiring=1` is sent.',
+    );
+  }
+  return data;
+}
+
+// Refresh an expiring offline access token using the stored refresh token.
+// Refresh tokens rotate — always persist the NEW refresh_token returned here.
+export async function refreshAccessToken(
+  shop: string,
+  refreshToken: string,
+): Promise<ShopifyTokenResponse> {
+  const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: env.SHOPIFY_CLIENT_ID,
+      client_secret: env.SHOPIFY_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to refresh token: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json() as ShopifyTokenResponse;
+  if (!data.access_token || !data.refresh_token) {
+    throw new Error('Malformed refresh response from Shopify');
+  }
+  return data;
 }
 
 // ─── HMAC helpers ────────────────────────────────────────────────────────────
@@ -105,6 +149,77 @@ export function decryptToken(encryptedToken: string): string {
   const key = crypto.scryptSync(env.SHOPIFY_CLIENT_SECRET, 'salt', 32);
   const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString();
+}
+
+// ─── Valid token helper (handles refresh) ───────────────────────────────────
+
+// Returns a decrypted, non-expired Shopify Admin API access token for the
+// merchant. If the stored token is within 60s of expiry (or already expired),
+// it's refreshed using the stored refresh token and the DB row is updated.
+// Callers must handle the case where the refresh token itself has expired
+// (90-day lifetime) — in that case, the merchant must reinstall.
+export async function getValidAccessToken(merchantId: string): Promise<string> {
+  const { db } = await import('../db.js');
+  const { merchants } = await import('@chatbot/db');
+  const { eq } = await import('drizzle-orm');
+
+  const [m] = await db
+    .select({
+      shopDomain: merchants.shopDomain,
+      encryptedShopifyToken: merchants.encryptedShopifyToken,
+      shopifyTokenExpiresAt: merchants.shopifyTokenExpiresAt,
+      encryptedShopifyRefreshToken: merchants.encryptedShopifyRefreshToken,
+      shopifyRefreshTokenExpiresAt: merchants.shopifyRefreshTokenExpiresAt,
+    })
+    .from(merchants)
+    .where(eq(merchants.id, merchantId))
+    .limit(1);
+
+  if (!m?.encryptedShopifyToken) {
+    throw new Error(`No Shopify token stored for merchant ${merchantId}`);
+  }
+
+  const now = Date.now();
+  const expiresAt = m.shopifyTokenExpiresAt?.getTime() ?? 0;
+  const stillValid = expiresAt > now + 60_000; // 60s safety margin
+
+  if (stillValid) {
+    return decryptToken(m.encryptedShopifyToken);
+  }
+
+  // Need to refresh
+  if (!m.encryptedShopifyRefreshToken) {
+    throw new Error(
+      `Merchant ${merchantId} has no refresh token — must reinstall the app`,
+    );
+  }
+  const refreshExpiresAt = m.shopifyRefreshTokenExpiresAt?.getTime() ?? 0;
+  if (refreshExpiresAt <= now) {
+    throw new Error(
+      `Refresh token expired for merchant ${merchantId} — must reinstall the app`,
+    );
+  }
+
+  const refreshed = await refreshAccessToken(
+    m.shopDomain,
+    decryptToken(m.encryptedShopifyRefreshToken),
+  );
+
+  // Persist rotated tokens
+  await db
+    .update(merchants)
+    .set({
+      encryptedShopifyToken: encryptToken(refreshed.access_token),
+      shopifyTokenExpiresAt: new Date(now + refreshed.expires_in * 1000),
+      encryptedShopifyRefreshToken: encryptToken(refreshed.refresh_token),
+      shopifyRefreshTokenExpiresAt: new Date(
+        now + refreshed.refresh_token_expires_in * 1000,
+      ),
+      updatedAt: new Date(),
+    })
+    .where(eq(merchants.id, merchantId));
+
+  return refreshed.access_token;
 }
 
 // ─── Webhook registration ────────────────────────────────────────────────────

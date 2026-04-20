@@ -21,6 +21,9 @@ import {
 
 const APP_NAME = 'ShopSifu';
 
+// Always render fresh so the nav reflects the current Clerk session.
+export const dynamic = 'force-dynamic';
+
 /* ──────────── shared primitives ──────────── */
 
 function EyebrowPill({

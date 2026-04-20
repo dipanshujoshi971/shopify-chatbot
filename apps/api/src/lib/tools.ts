@@ -20,7 +20,7 @@ import { z }          from 'zod';
 import type postgres  from 'postgres';
 import { nanoid }     from 'nanoid';
 import { AzureOpenAI } from 'openai';
-import { decryptToken } from './shopify.js';
+import { getValidAccessToken } from './shopify.js';
 import { env }        from '../env.js';
 
 // ─── Context ─────────────────────────────────────────────────────────────────
@@ -30,7 +30,8 @@ export interface AdminToolContext {
   shopDomain:            string;   // "acme-shop.myshopify.com"
   /** Shared pgPool from db.ts — never call .end() on this */
   sql:                   ReturnType<typeof postgres>;
-  encryptedShopifyToken: string | null;
+  /** true if merchant has a stored Shopify token (order lookup configured) */
+  hasShopifyToken:       boolean;
 }
 
 // ─── GraphQL helpers ─────────────────────────────────────────────────────────
@@ -212,7 +213,7 @@ export function createAdminTools(ctx: AdminToolContext) {
           .describe('Customer email address for identity verification — REQUIRED'),
       }),
       execute: async ({ order_identifier, customer_email }) => {
-        if (!ctx.encryptedShopifyToken) {
+        if (!ctx.hasShopifyToken) {
           console.warn(`[get_order_status] No Shopify token for tenant ${ctx.tenantId} — order lookup not configured`);
           return { found: false, message: 'Order lookup is not configured for this store.' };
         }
@@ -220,13 +221,13 @@ export function createAdminTools(ctx: AdminToolContext) {
         try {
           let accessToken: string;
           try {
-            accessToken = decryptToken(ctx.encryptedShopifyToken);
+            accessToken = await getValidAccessToken(ctx.tenantId);
           } catch (e) {
-            console.error(`[get_order_status] Token decryption failed for ${ctx.shopDomain} — SHOPIFY_CLIENT_SECRET may have changed since the token was saved. Merchant must reinstall the app.`, (e as Error).message);
+            console.error(`[get_order_status] Could not obtain valid access token for ${ctx.shopDomain} — refresh token may be expired or SHOPIFY_CLIENT_SECRET rotated. Merchant must reinstall.`, (e as Error).message);
             return { found: false, message: 'Order lookup is not configured for this store. Please reinstall the app.' };
           }
           if (!/^shp(at|ua|ca|pa)_/.test(accessToken)) {
-            console.error(`[get_order_status] Decrypted token does not start with expected shpat_/shpua_ prefix for ${ctx.shopDomain} — likely SHOPIFY_CLIENT_SECRET mismatch. Merchant must reinstall.`);
+            console.error(`[get_order_status] Access token does not start with expected shpat_/shpua_ prefix for ${ctx.shopDomain}. Merchant must reinstall.`);
             return { found: false, message: 'Order lookup is not configured for this store. Please reinstall the app.' };
           }
           const orderNumber = order_identifier.replace(/^#/, '').trim();

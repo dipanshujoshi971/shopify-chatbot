@@ -81,38 +81,57 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     }
     await valkey.del(`oauth_state:${state}`);
 
-    // 4 — Exchange code for raw access token
-    const accessToken = await exchangeCodeForToken(shop, code);
+    // 4 — Exchange code for expiring offline token + refresh token
+    const tokens = await exchangeCodeForToken(shop, code);
 
     // 5 — Register webhooks (use raw token — needed for Admin API call)
     try {
-      await registerWebhooks(shop, accessToken, request.log);
+      await registerWebhooks(shop, tokens.access_token, request.log);
       request.log.info({ shop }, 'Webhooks registered');
     } catch (err) {
       request.log.warn({ shop, err }, 'Failed to register some webhooks');
     }
 
-    // 6 — Encrypt token for storage
-    const encryptedToken = encryptToken(accessToken);
+    // 6 — Encrypt tokens for storage
+    const now = Date.now();
+    const encryptedToken        = encryptToken(tokens.access_token);
+    const encryptedRefreshToken = encryptToken(tokens.refresh_token);
+    const tokenExpiresAt        = new Date(now + tokens.expires_in * 1000);
+    const refreshTokenExpiresAt = new Date(now + tokens.refresh_token_expires_in * 1000);
 
     // 7 — Upsert merchant using the singleton db (no new pool created)
     const merchantId        = `store_${shop.replace('.myshopify.com', '').replace(/[^a-z0-9]/g, '_')}`;
     const publishableApiKey = `pk_${nanoid(32)}`;
 
+    // Was this merchant already linked to a Clerk account on a prior install?
+    // If yes, send them to /sign-in; if brand-new, /sign-up.
+    const priorLink = await db
+      .select({ clerkUserId: merchants.clerkUserId })
+      .from(merchants)
+      .where(eq(merchants.shopDomain, shop))
+      .limit(1);
+    const hasClerkAccount = !!priorLink[0]?.clerkUserId;
+
     await db.insert(merchants).values({
-      id:                    merchantId,
-      shopDomain:            shop,
-      status:                'active',
-      planId:                'starter',
+      id:                             merchantId,
+      shopDomain:                     shop,
+      status:                         'active',
+      planId:                         'starter',
       publishableApiKey,
-      encryptedShopifyToken: encryptedToken,
+      encryptedShopifyToken:          encryptedToken,
+      shopifyTokenExpiresAt:          tokenExpiresAt,
+      encryptedShopifyRefreshToken:   encryptedRefreshToken,
+      shopifyRefreshTokenExpiresAt:   refreshTokenExpiresAt,
     }).onConflictDoUpdate({
       target: merchants.shopDomain,
       set: {
-        status:                'active',
-        encryptedShopifyToken: encryptedToken,
-        frozenAt:              null,
-        updatedAt:             new Date(),
+        status:                         'active',
+        encryptedShopifyToken:          encryptedToken,
+        shopifyTokenExpiresAt:          tokenExpiresAt,
+        encryptedShopifyRefreshToken:   encryptedRefreshToken,
+        shopifyRefreshTokenExpiresAt:   refreshTokenExpiresAt,
+        frozenAt:                       null,
+        updatedAt:                      new Date(),
       },
     });
 
@@ -140,10 +159,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       `pending_shop=${shop}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isSecure ? '; Secure' : ''}`,
     );
 
-    // Redirect to sign-up — new merchants need a dashboard account first.
-    // Existing merchants can click "Already have an account? Sign in".
+    // Returning merchant with linked Clerk account → sign-in
+    // Brand-new merchant → sign-up
     const dashboardUrl = env.ALLOWED_ORIGINS.split(',')[0].trim();
-    return reply.redirect(`${dashboardUrl}/sign-up`);
+    const authPath = hasClerkAccount ? '/sign-in' : '/sign-up';
+    return reply.redirect(`${dashboardUrl}${authPath}`);
   });
 
 };

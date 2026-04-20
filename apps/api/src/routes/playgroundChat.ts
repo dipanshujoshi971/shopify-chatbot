@@ -124,7 +124,7 @@ const playgroundChatRoutes: FastifyPluginAsync = async (app) => {
       tenantId,
       shopDomain,
       sql: pgPool,
-      encryptedShopifyToken: merchant.encryptedShopifyToken ?? null,
+      hasShopifyToken: !!merchant.encryptedShopifyToken,
     });
     const tools = { ...mcpTools, ...adminTools };
 

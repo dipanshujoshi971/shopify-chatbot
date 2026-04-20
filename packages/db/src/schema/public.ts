@@ -7,8 +7,13 @@ export const merchants = pgTable('merchants', {
   status: text('status').notNull().default('active'),
   planId: text('plan_id').notNull().default('starter'),
   publishableApiKey: text('publishable_api_key').notNull().unique(),
-  // AES-256-CBC encrypted Shopify access token — never stored in plaintext
+  // AES-256-CBC encrypted Shopify access token — never stored in plaintext.
+  // With Shopify's expiring offline tokens (Dec 2025), this expires every ~1h
+  // and must be refreshed via the refresh token below.
   encryptedShopifyToken: text('encrypted_shopify_token'),
+  shopifyTokenExpiresAt: timestamp('shopify_token_expires_at'),
+  encryptedShopifyRefreshToken: text('encrypted_shopify_refresh_token'),
+  shopifyRefreshTokenExpiresAt: timestamp('shopify_refresh_token_expires_at'),
   clerkOrgId: text('clerk_org_id').unique(),
   clerkUserId: text('clerk_user_id').unique(),
   stripeCustomerId: text('stripe_customer_id').unique(),
