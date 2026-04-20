@@ -33,7 +33,7 @@ type MfaContext = {
 }
 
 function pickSecondFactor(
-  supported: ReadonlyArray<{ strategy: string; safeIdentifier?: string | null }> | undefined,
+  supported: ReadonlyArray<{ strategy: string; safeIdentifier?: string | null }> | null | undefined,
 ): { strategy: MfaStrategy; destination: string } | null {
   if (!supported?.length) return null
   const email = supported.find((f) => f.strategy === 'email_code')
