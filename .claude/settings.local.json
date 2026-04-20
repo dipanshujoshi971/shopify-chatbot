@@ -6,7 +6,8 @@
       "WebFetch(domain:api.anthropic.com)",
       "Read(//tmp/design/**)",
       "Read(//tmp/design/shopsifu/**)",
-      "Bash(cygpath -w /tmp/design/shopsifu/project/)"
+      "Bash(cygpath -w /tmp/design/shopsifu/project/)",
+      "Bash(xargs grep *)"
     ]
   }
 }

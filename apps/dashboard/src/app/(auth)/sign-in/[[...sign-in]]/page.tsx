@@ -1,36 +1,160 @@
-import { SignIn } from '@clerk/nextjs'
+'use client'
+
+import { useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useSignIn } from '@clerk/nextjs'
+import { isClerkAPIResponseError } from '@clerk/nextjs/errors'
+import {
+  AuthShell,
+  AuthField,
+  AuthSubmit,
+  GoogleButton,
+  AuthDivider,
+  AuthError,
+} from '../../_components/AuthShell'
+
+function extractError(err: unknown): string {
+  if (isClerkAPIResponseError(err)) {
+    const first = err.errors?.[0]
+    return first?.longMessage ?? first?.message ?? 'Something went wrong. Please try again.'
+  }
+  if (err instanceof Error) return err.message
+  return 'Something went wrong. Please try again.'
+}
 
 export default function SignInPage() {
-  return (
-    <SignIn
-      appearance={{
-        elements: {
-          rootBox: "w-full",
-          card: "shadow-none bg-[var(--glass-bg)] backdrop-blur-[var(--glass-blur)] border border-[var(--glass-border)] rounded-2xl p-2",
-          cardBox: "shadow-none",
-          headerTitle: "text-xl font-bold text-foreground",
-          headerSubtitle: "text-muted-foreground text-sm",
-          socialButtonsBlockButton:
-            "border border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-sm rounded-xl text-sm font-medium text-foreground hover:bg-accent/40 transition-all",
-          socialButtonsBlockButtonText: "text-foreground font-medium",
-          dividerLine: "bg-[var(--glass-border)]",
-          dividerText: "text-muted-foreground text-xs",
-          formFieldLabel: "text-sm font-medium text-foreground",
-          formFieldInput:
-            "rounded-xl border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-sm text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:ring-2 focus:ring-primary/20",
-          formButtonPrimary:
-            "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 rounded-xl text-sm font-semibold shadow-lg shadow-emerald-500/20 transition-all",
-          footerActionLink: "text-primary font-semibold hover:text-primary/80",
-          footerActionText: "text-muted-foreground",
-          identityPreviewText: "text-foreground",
-          identityPreviewEditButton: "text-primary hover:text-primary/80",
-          formFieldAction: "text-primary font-medium hover:text-primary/80",
-          formFieldInputShowPasswordButton: "text-muted-foreground hover:text-foreground",
-          otpCodeFieldInput: "border-[var(--glass-border)] bg-[var(--glass-bg)] text-foreground",
-          alert: "rounded-xl border-destructive/30 bg-destructive/5",
-          alertText: "text-destructive text-sm",
+  const { signIn, fetchStatus } = useSignIn()
+  const router = useRouter()
+
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [oauthLoading, setOauthLoading] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (submitting) return
+    setError(null)
+    setSubmitting(true)
+
+    try {
+      const res = await signIn.password({ identifier: email, password })
+      if (res?.error) {
+        setError(extractError(res.error))
+        return
+      }
+      const finalizeRes = await signIn.finalize({
+        navigate: async (to) => {
+          router.push(typeof to === 'string' ? to : '/dashboard')
         },
-      }}
-    />
+      })
+      if (finalizeRes?.error) {
+        setError(extractError(finalizeRes.error))
+        return
+      }
+      router.push('/dashboard')
+    } catch (err) {
+      setError(extractError(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleGoogle = async () => {
+    if (oauthLoading) return
+    setError(null)
+    setOauthLoading(true)
+    try {
+      await signIn.sso({
+        strategy: 'oauth_google',
+        redirectUrl: '/sso-callback',
+        redirectCallbackUrl: '/sso-callback',
+      })
+    } catch (err) {
+      setError(extractError(err))
+      setOauthLoading(false)
+    }
+  }
+
+  const busy = submitting || fetchStatus === 'fetching'
+
+  return (
+    <AuthShell
+      eyebrow="Welcome Back"
+      title={
+        <>
+          Step back into <span className="sifu-chrome">the dojo.</span>
+        </>
+      }
+      subtitle="Sign in to your ShopSifu dashboard"
+      footer={
+        <>
+          New here?{' '}
+          <Link
+            href="/sign-up"
+            className="font-semibold transition-colors"
+            style={{ color: '#7df9ff' }}
+          >
+            Create an account →
+          </Link>
+        </>
+      }
+    >
+      <AuthError message={error} />
+
+      <GoogleButton
+        onClick={handleGoogle}
+        disabled={busy || oauthLoading}
+        label={oauthLoading ? 'Redirecting to Google…' : 'Continue with Google'}
+      />
+
+      <AuthDivider />
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthField
+          id="email"
+          label="Email"
+          type="email"
+          value={email}
+          onChange={setEmail}
+          autoComplete="email"
+          placeholder="you@store.com"
+          disabled={busy}
+          required
+        />
+        <AuthField
+          id="password"
+          label="Password"
+          type={showPassword ? 'text' : 'password'}
+          value={password}
+          onChange={setPassword}
+          autoComplete="current-password"
+          placeholder="••••••••"
+          disabled={busy}
+          required
+          rightSlot={
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="sifu-mono text-[10px] uppercase transition-colors hover:text-white"
+              style={{ color: '#6b7796', letterSpacing: '0.14em' }}
+            >
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          }
+        />
+        <AuthSubmit loading={busy}>
+          {busy ? 'Signing in…' : 'Sign in'}
+          {!busy && (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M5 12h14M13 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </AuthSubmit>
+      </form>
+    </AuthShell>
   )
 }
