@@ -47,10 +47,14 @@ await app.register(helmet, {
 });
 
 // Force HTTPS in production (behind TLS-terminating proxy; trust X-Forwarded-Proto).
+// Loopback traffic (dashboard → API on same host via 127.0.0.1) is exempt — it
+// never leaves the machine, and redirecting it drops POST bodies.
 if (env.NODE_ENV === 'production') {
   app.addHook('onRequest', async (request, reply) => {
     const proto = (request.headers['x-forwarded-proto'] as string | undefined) ?? request.protocol;
-    if (proto !== 'https') {
+    const ip = request.ip;
+    const isLoopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+    if (proto !== 'https' && !isLoopback) {
       return reply.redirect(`https://${request.hostname}${request.url}`, 301);
     }
   });
