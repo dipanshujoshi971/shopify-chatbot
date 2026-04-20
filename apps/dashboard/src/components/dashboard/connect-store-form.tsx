@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Store, Loader2, ArrowRight, ShieldCheck, Zap, Globe } from 'lucide-react';
+import { Store, Loader2, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LogoMark } from '@/components/logo';
 
@@ -120,37 +120,7 @@ export function ConnectStoreForm() {
               )}
             </button>
           </form>
-
-          {/* Trust signals */}
-          <div className="mt-6 pt-5 border-t border-[var(--glass-border)]">
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { icon: ShieldCheck, label: 'Secure', desc: 'AES-256' },
-                { icon: Zap, label: 'Fast', desc: '< 1s setup' },
-                { icon: Globe, label: 'Global', desc: '10K+ stores' },
-              ].map((trust) => (
-                <div key={trust.label} className="text-center">
-                  <trust.icon className="w-4 h-4 text-primary mx-auto mb-1" />
-                  <p className="text-[11px] font-semibold text-foreground">{trust.label}</p>
-                  <p className="text-[10px] text-muted-foreground">{trust.desc}</p>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
-
-        {/* Footer */}
-        <p className="text-center text-xs text-muted-foreground mt-5">
-          Need to install the app first?{' '}
-          <a
-            href="https://apps.shopify.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary font-semibold hover:text-primary/80 transition-colors"
-          >
-            Visit the Shopify App Store
-          </a>
-        </p>
       </div>
     </div>
   );

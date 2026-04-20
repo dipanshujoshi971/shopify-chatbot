@@ -47,7 +47,7 @@ export default function SignUpPage() {
     setSubmitting(true)
 
     try {
-      const createRes = await signUp.create({ emailAddress: email, password })
+      const createRes = await signUp.password({ emailAddress: email, password })
       if (createRes?.error) {
         setError(extractError(createRes.error))
         return
