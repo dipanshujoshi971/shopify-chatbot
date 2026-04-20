@@ -83,10 +83,13 @@ export default function SignInPage() {
 
   const busy = submitting || fetchStatus === 'fetching'
 
-  const finalizeSession = async (): Promise<boolean> => {
-    const createdSessionId = clerk.client?.signIn?.createdSessionId
-    const status = clerk.client?.signIn?.status
-    if (status !== 'complete' || !createdSessionId) return false
+  const finalizeSession = async (sessionIdOverride?: string | null): Promise<boolean> => {
+    const createdSessionId =
+      sessionIdOverride ??
+      signIn.createdSessionId ??
+      clerk.client?.signIn?.createdSessionId ??
+      null
+    if (!createdSessionId) return false
     await clerk.setActive({ session: createdSessionId })
     router.push('/dashboard')
     return true
@@ -108,7 +111,8 @@ export default function SignInPage() {
   const verifySecondFactor = async (strategy: MfaStrategy, code: string) => {
     const live = clerk.client?.signIn
     if (!live) throw new Error('No sign-in in progress.')
-    await live.attemptSecondFactor({ strategy, code })
+    const result = await live.attemptSecondFactor({ strategy, code })
+    return result.createdSessionId
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -171,8 +175,8 @@ export default function SignInPage() {
     setError(null)
     setSubmitting(true)
     try {
-      await verifySecondFactor(mfa.strategy, mfaCode)
-      if (!(await finalizeSession())) {
+      const sessionId = await verifySecondFactor(mfa.strategy, mfaCode)
+      if (!(await finalizeSession(sessionId))) {
         setError('Verification succeeded but sign-in could not complete. Please try again.')
       }
     } catch (err) {
