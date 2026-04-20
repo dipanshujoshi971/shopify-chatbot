@@ -53,8 +53,29 @@ export default function SSOCallbackPage() {
       }
 
       try {
-        // Existing user signing in via OAuth.
-        if (signIn.status === 'complete') {
+        // New OAuth user — Clerk transferred us to a sign-up. Complete it first.
+        if (signIn.isTransferable && !signUp.createdSessionId) {
+          const { error: createErr } = await signUp.create({ transfer: true })
+          if (createErr) {
+            setError(extractError(createErr))
+            return
+          }
+        }
+
+        // Prefer finalizing whichever flow actually produced a session.
+        if (signUp.status === 'complete' && signUp.createdSessionId) {
+          const { error: finErr } = await signUp.finalize({
+            navigate: async (to) => go(typeof to === 'string' ? to : '/dashboard'),
+          })
+          if (finErr) {
+            setError(extractError(finErr))
+            return
+          }
+          go('/dashboard')
+          return
+        }
+
+        if (signIn.status === 'complete' && signIn.createdSessionId) {
           const { error: finErr } = await signIn.finalize({
             navigate: async (to) => go(typeof to === 'string' ? to : '/dashboard'),
           })
@@ -66,23 +87,8 @@ export default function SSOCallbackPage() {
           return
         }
 
-        // New OAuth user — Clerk transferred us to a sign-up. Complete it.
-        if (signIn.isTransferable) {
-          const { error: createErr } = await signUp.create({ transfer: true })
-          if (createErr) {
-            setError(extractError(createErr))
-            return
-          }
-        }
-
-        if (signUp.status === 'complete') {
-          const { error: finErr } = await signUp.finalize({
-            navigate: async (to) => go(typeof to === 'string' ? to : '/dashboard'),
-          })
-          if (finErr) {
-            setError(extractError(finErr))
-            return
-          }
+        // handleRedirectCallback may have already activated the session.
+        if (clerk.session) {
           go('/dashboard')
           return
         }

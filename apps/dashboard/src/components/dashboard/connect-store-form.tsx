@@ -1,17 +1,50 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Store, Loader2, ArrowRight } from 'lucide-react';
+import { useClerk } from '@clerk/nextjs';
+import { Store, Loader2, ArrowRight, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LogoMark } from '@/components/logo';
 
 export function ConnectStoreForm() {
   const router = useRouter();
+  const clerk = useClerk();
   const [domain, setDomain] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const connectedRef = useRef(false);
+
+  async function handleSignOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await clerk.signOut({ redirectUrl: '/sign-in' });
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
+  // Auto-logout if the user abandons this page without connecting a store.
+  useEffect(() => {
+    const logoutBeacon = () => {
+      if (connectedRef.current) return;
+      try {
+        // Best-effort async signout — fire and forget on unload.
+        void clerk.signOut();
+      } catch {
+        // swallow
+      }
+    };
+    window.addEventListener('pagehide', logoutBeacon);
+    window.addEventListener('beforeunload', logoutBeacon);
+    return () => {
+      window.removeEventListener('pagehide', logoutBeacon);
+      window.removeEventListener('beforeunload', logoutBeacon);
+    };
+  }, [clerk]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,6 +64,7 @@ export function ConnectStoreForm() {
       });
       const data = await res.json() as { error?: string; success?: boolean };
       if (!res.ok) { setError(data.error ?? 'Connection failed'); return; }
+      connectedRef.current = true;
       router.refresh();
     } catch {
       setError('Network error. Please try again.');
@@ -41,6 +75,20 @@ export function ConnectStoreForm() {
 
   return (
     <div className="min-h-screen mesh-gradient flex items-center justify-center p-6 relative overflow-hidden">
+      {/* Signout button — top-right */}
+      <button
+        onClick={handleSignOut}
+        disabled={signingOut}
+        className="absolute top-5 right-5 z-20 inline-flex items-center gap-2 rounded-xl border border-[var(--glass-border)] bg-background/40 backdrop-blur px-3.5 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground hover:border-destructive/40 hover:bg-destructive/5 transition-all disabled:opacity-60"
+      >
+        {signingOut ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <LogOut className="w-3.5 h-3.5" />
+        )}
+        {signingOut ? 'Signing out…' : 'Sign out'}
+      </button>
+
       {/* Background effects */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute -top-[200px] -right-[100px] w-[500px] h-[500px] rounded-full bg-primary/5 blur-[120px]" />
