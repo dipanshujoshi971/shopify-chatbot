@@ -25,21 +25,42 @@ function extractError(err: unknown): string {
 
 type MfaStrategy = 'email_code' | 'phone_code'
 
+type SupportedFactor = {
+  strategy: string
+  safeIdentifier?: string | null
+  emailAddressId?: string
+  phoneNumberId?: string
+}
+
 type MfaContext = {
   strategy: MfaStrategy
   destination: string
+  emailAddressId?: string
+  phoneNumberId?: string
   // 'client_trust' for new-device challenge, 'mfa' for user-enabled MFA
   reason: 'client_trust' | 'mfa'
 }
 
 function pickSecondFactor(
-  supported: ReadonlyArray<{ strategy: string; safeIdentifier?: string | null }> | null | undefined,
-): { strategy: MfaStrategy; destination: string } | null {
+  supported: ReadonlyArray<SupportedFactor> | null | undefined,
+): Omit<MfaContext, 'reason'> | null {
   if (!supported?.length) return null
   const email = supported.find((f) => f.strategy === 'email_code')
-  if (email) return { strategy: 'email_code', destination: email.safeIdentifier ?? 'your email' }
+  if (email) {
+    return {
+      strategy: 'email_code',
+      destination: email.safeIdentifier ?? 'your email',
+      emailAddressId: email.emailAddressId,
+    }
+  }
   const phone = supported.find((f) => f.strategy === 'phone_code')
-  if (phone) return { strategy: 'phone_code', destination: phone.safeIdentifier ?? 'your phone' }
+  if (phone) {
+    return {
+      strategy: 'phone_code',
+      destination: phone.safeIdentifier ?? 'your phone',
+      phoneNumberId: phone.phoneNumberId,
+    }
+  }
   return null
 }
 
@@ -71,20 +92,23 @@ export default function SignInPage() {
     return true
   }
 
-  const sendSecondFactor = async (strategy: MfaStrategy) => {
-    const res =
-      strategy === 'email_code'
-        ? await signIn.mfa.sendEmailCode()
-        : await signIn.mfa.sendPhoneCode()
-    if (res?.error) throw res.error
+  // Use the traditional SignInResource API for second-factor prep/attempt.
+  // It takes the explicit emailAddressId/phoneNumberId that Clerk returns in
+  // supportedSecondFactors, which is what both client-trust and MFA expect.
+  const sendSecondFactor = async (ctx: Pick<MfaContext, 'strategy' | 'emailAddressId' | 'phoneNumberId'>) => {
+    const live = clerk.client?.signIn
+    if (!live) throw new Error('No sign-in in progress.')
+    if (ctx.strategy === 'email_code') {
+      await live.prepareSecondFactor({ strategy: 'email_code', emailAddressId: ctx.emailAddressId! })
+    } else {
+      await live.prepareSecondFactor({ strategy: 'phone_code', phoneNumberId: ctx.phoneNumberId! })
+    }
   }
 
   const verifySecondFactor = async (strategy: MfaStrategy, code: string) => {
-    const res =
-      strategy === 'email_code'
-        ? await signIn.mfa.verifyEmailCode({ code })
-        : await signIn.mfa.verifyPhoneCode({ code })
-    if (res?.error) throw res.error
+    const live = clerk.client?.signIn
+    if (!live) throw new Error('No sign-in in progress.')
+    await live.attemptSecondFactor({ strategy, code })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -119,7 +143,7 @@ export default function SignInPage() {
           return
         }
         try {
-          await sendSecondFactor(picked.strategy)
+          await sendSecondFactor(picked)
         } catch (sendErr) {
           setError(extractError(sendErr))
           return
@@ -163,7 +187,7 @@ export default function SignInPage() {
     setError(null)
     setResent(false)
     try {
-      await sendSecondFactor(mfa.strategy)
+      await sendSecondFactor(mfa)
       setResent(true)
       setTimeout(() => setResent(false), 4000)
     } catch (err) {

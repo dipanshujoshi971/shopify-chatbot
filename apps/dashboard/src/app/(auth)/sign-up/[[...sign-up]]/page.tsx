@@ -86,8 +86,11 @@ export default function SignUpPage() {
         return
       }
 
-      const createdSessionId = clerk.client?.signUp?.createdSessionId
-      const status = clerk.client?.signUp?.status
+      // Prefer the hook's future resource (reactive, updated by verifyEmailCode),
+      // but fall back to the live client — whichever has the session wins.
+      const createdSessionId =
+        signUp.createdSessionId ?? clerk.client?.signUp?.createdSessionId ?? null
+      const status = signUp.status ?? clerk.client?.signUp?.status
 
       if (status !== 'complete' || !createdSessionId) {
         setError('Verification succeeded but sign-up could not complete. Please try again.')
