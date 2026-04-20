@@ -7,7 +7,7 @@ import {
   ShoppingCart,
   Package,
   Brain,
-  Hand,
+  Ticket,
   UserCircle2,
   ArrowRight,
   Check,
@@ -432,7 +432,7 @@ const features = [
   { icon: ShoppingCart, title: 'Cart Inside Chat', desc: 'Add, vary, and checkout without leaving the conversation. Less drop-off, more close.', accent: 'sunset' as const },
   { icon: Package, title: 'Order Tracking', desc: 'Real-time status from the Shopify Admin API. Tracking, ETA, carrier — in one breath.', accent: 'cyan' as const },
   { icon: Brain, title: 'RAG-Powered FAQ', desc: "Feeds on your policies, guides, and docs. Cites sources. Says 'I don't know' when it doesn't.", accent: 'sunset' as const },
-  { icon: Hand, title: 'Human Escalation', desc: 'When the Sifu meets its match, it hands off to your team with full context and intent.', accent: 'cyan' as const },
+  { icon: Ticket, title: 'Support Tickets', desc: "When Sifu can't resolve something, shoppers raise a ticket right in the chat — you see it in your dashboard with the full transcript.", accent: 'cyan' as const },
   { icon: UserCircle2, title: 'Custom Personality', desc: 'Playful, formal, or brand-perfect. Tune the tone in 30 seconds — preview before you publish.', accent: 'sunset' as const },
 ];
 
