@@ -24,15 +24,21 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Invalid shop domain' });
     }
 
-    // If the merchant already has a record (returning user clicking the app
-    // in Shopify admin), skip OAuth and send them straight to the dashboard.
+    // If the merchant already has an ACTIVE record (returning user clicking
+    // the app in Shopify admin), skip OAuth and send them straight to the
+    // dashboard. Frozen/uninstalled merchants must re-run OAuth so the token
+    // is refreshed and status is flipped back to 'active'.
     const existing = await db
-      .select({ id: merchants.id, encryptedShopifyToken: merchants.encryptedShopifyToken })
+      .select({
+        id: merchants.id,
+        encryptedShopifyToken: merchants.encryptedShopifyToken,
+        status: merchants.status,
+      })
       .from(merchants)
       .where(eq(merchants.shopDomain, shop))
       .limit(1);
 
-    if (existing[0]?.encryptedShopifyToken) {
+    if (existing[0]?.encryptedShopifyToken && existing[0].status === 'active') {
       request.log.info({ shop }, 'Merchant already installed — redirecting to dashboard');
       const isSecure = env.NODE_ENV === 'production';
       reply.header(
