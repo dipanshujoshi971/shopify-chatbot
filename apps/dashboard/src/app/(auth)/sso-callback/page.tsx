@@ -28,7 +28,9 @@ export default function SSOCallbackPage() {
     ran.current = true
 
     const go = (to: string) => {
-      router.push(to)
+      // Hard navigate so the session cookie is attached to the /dashboard
+      // request and Next.js doesn't serve a cached (anonymous) RSC.
+      window.location.assign(to)
     }
 
     ;(async () => {

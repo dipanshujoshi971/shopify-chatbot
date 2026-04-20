@@ -82,11 +82,15 @@ function SendIcon() {
     </svg>
   );
 }
+const SHOPSIFU_LOGO_URL = 'https://shopsifu.com/shopsifu-logo.png';
+
 function BotIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h2a4 4 0 014 4v6a4 4 0 01-4 4H9a4 4 0 01-4-4v-6a4 4 0 014-4h2V5.73A2 2 0 0112 2zm-3 9a1 1 0 100 2 1 1 0 000-2zm6 0a1 1 0 100 2 1 1 0 000-2zm-3 3.5c-1.1 0-2 .67-2 1.5h4c0-.83-.9-1.5-2-1.5z" />
-    </svg>
+    <img
+      src={SHOPSIFU_LOGO_URL}
+      alt="ShopSifu"
+      class="sb-bot-logo"
+    />
   );
 }
 function TicketIcon() {

@@ -266,6 +266,8 @@ export const WIDGET_CSS = /* css */ `
     flex-shrink: 0;
   }
   .sb-header-avatar svg { width: 22px; height: 22px; }
+  .sb-header-avatar .sb-bot-logo { width: 28px; height: 28px; object-fit: contain; }
+  .sb-empty-bot-icon .sb-bot-logo { width: 36px; height: 36px; object-fit: contain; filter: drop-shadow(0 2px 10px rgba(99,102,241,0.45)); }
   .sb-header-info { min-width: 0; }
   .sb-header-title {
     font-weight: 700;
@@ -671,9 +673,13 @@ export const WIDGET_CSS = /* css */ `
     color: var(--sb-text);
     max-height: 100px;
     overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
     transition: border-color var(--sb-transition-fast), box-shadow var(--sb-transition-fast),
                 background var(--sb-transition-fast);
   }
+  .sb-textarea::-webkit-scrollbar { width: 0; height: 0; display: none; }
+  .sb-textarea::-webkit-scrollbar-button { display: none; }
   .sb-textarea:focus {
     border-color: var(--sb-accent);
     box-shadow: 0 0 0 4px rgba(99,102,241,.1);
