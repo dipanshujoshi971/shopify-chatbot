@@ -681,6 +681,11 @@ export default function AIPlaygroundPage() {
     setIsTyping(true);
 
     try {
+      const history = messages
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .slice(-20)
+        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -688,18 +693,24 @@ export default function AIPlaygroundPage() {
           message: text,
           sessionId: 'playground-preview',
           previewConfig: config,
+          history,
         }),
       });
 
-      if (!res.ok) throw new Error('Chat request failed');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && !data?.output) throw new Error(data?.error ?? 'Chat request failed');
 
-      const data = await res.json();
-      const output = typeof data === 'string' ? data : data?.output ?? data?.reply ?? JSON.stringify(data);
+      const reply = data?.output ?? data?.reply ?? '';
+      const products = data?.products ?? [];
+
+      const assistantContent = products.length > 0
+        ? JSON.stringify({ reply, products: products.map((p: any) => ({ title: p.title, price: p.priceRange?.minVariantPrice?.amount ? `${p.priceRange.minVariantPrice.amount} ${p.priceRange.minVariantPrice.currencyCode ?? ''}` : '' })) })
+        : reply;
 
       setMessages((prev) => [...prev, {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: output,
+        content: assistantContent,
         timestamp: new Date(),
       }]);
     } catch (err) {

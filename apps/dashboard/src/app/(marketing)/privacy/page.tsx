@@ -73,7 +73,6 @@ export default function PrivacyPage() {
           <li>Account details via Clerk (email, name, authentication metadata).</li>
           <li>Chatbot configuration, tone, custom instructions, and branding choices.</li>
           <li>Knowledge-base documents the merchant uploads to train the bot.</li>
-          <li>If and when paid plans are offered, billing information will be processed by Shopify Billing or our payment processor; we do not store card numbers.</li>
         </ul>
 
         <h3 className="text-xl font-semibold">From shoppers (chat widget)</h3>
@@ -159,7 +158,9 @@ export default function PrivacyPage() {
           <li>Shopify OAuth tokens are encrypted at rest with AES-256.</li>
           <li>All traffic is served over HTTPS with HSTS enabled.</li>
           <li>Chat widget requests are authenticated via a per-merchant publishable API key and Origin validation.</li>
-          <li>Access to production systems is limited and logged.</li>
+          <li>Access to production systems is restricted to a limited number of authorized personnel on a need-to-know basis, requires multi-factor authentication, and all privileged access is recorded in an audit log.</li>
+          <li>Staff with access to merchant or shopper personal data are bound by written confidentiality obligations and receive periodic security training.</li>
+          <li>Our staff cannot view merchant–shopper conversations by default. Conversation content is only exposed to our support team when the merchant explicitly opens a support ticket linked to that conversation, and every such escalation is recorded in our audit log.</li>
         </ul>
 
         <h2 className="text-2xl font-semibold">6. Data retention</h2>
@@ -185,9 +186,12 @@ export default function PrivacyPage() {
             and support tickets associated with the identified shopper.
           </li>
           <li>
-            <code>shop/redact</code> — 48 hours after uninstall (or on receipt,
-            whichever is later) we drop the merchant&apos;s tenant schema and
-            all associated files in object storage.
+            <code>shop/redact</code> — Shopify fires this webhook 48 hours
+            after a merchant uninstalls. On receipt we drop the merchant&apos;s
+            tenant schema and all associated files in object storage. If the
+            merchant reinstalls within the 30-day grace period described in
+            §6, their data is restored; once <code>shop/redact</code> is
+            received, deletion is permanent.
           </li>
         </ul>
 
@@ -253,7 +257,20 @@ export default function PrivacyPage() {
           &ldquo;Last updated&rdquo; date at the top of this page.
         </p>
 
-        <h2 className="text-2xl font-semibold">14. Contact</h2>
+        <h2 className="text-2xl font-semibold">14. Data breach notification</h2>
+        <p>
+          In the event of a personal data breach that affects merchant or
+          shopper data, we will notify affected merchants without undue delay
+          and, where feasible, within 72 hours of becoming aware of the breach,
+          consistent with GDPR Article 33. Notifications will describe the
+          nature of the breach, the categories and approximate number of
+          records affected, likely consequences, and the measures taken or
+          proposed to address it. Merchants are responsible for notifying their
+          shoppers and, where applicable, their local data protection
+          authority.
+        </p>
+
+        <h2 className="text-2xl font-semibold">15. Contact</h2>
         <p>
           Privacy questions: <a className="underline" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
           <br />

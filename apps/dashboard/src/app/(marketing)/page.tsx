@@ -575,7 +575,7 @@ export default async function LandingPage() {
               className="sifu-rise sifu-rise-d2 mx-auto mb-9 mt-7 max-w-[640px] text-[17px] leading-relaxed"
               style={{ color: '#b5bfd9' }}
             >
-              {APP_NAME} plugs into your Shopify catalog, reads your policies, and chats with shoppers in your
+              {APP_NAME}  plugs into your Shopify catalog, reads your policies, and chats with shoppers in your
               brand&apos;s voice. Product questions, order lookups, and support — answered the moment they&apos;re asked.
             </p>
 

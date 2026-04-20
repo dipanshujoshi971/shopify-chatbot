@@ -15,6 +15,7 @@ import dashboardAuthPlugin from './plugins/dashboardAuth.js';
 import knowledgeRoutes from './routes/dashboard/knowledge.js';
 import resolveKeyRoute from './routes/widget/resolveKey.js';
 import internalRoutes from './routes/internal.js';
+import playgroundChatRoutes from './routes/playgroundChat.js';
 
 const app = Fastify({
   loggerInstance: logger,
@@ -106,6 +107,7 @@ await app.register(socketIoPlugin);
 await app.register(authRoutes);
 await app.register(webhookRoutes);
 await app.register(internalRoutes);
+await app.register(playgroundChatRoutes);
 
 await app.register(
   async (widgetScope) => {
