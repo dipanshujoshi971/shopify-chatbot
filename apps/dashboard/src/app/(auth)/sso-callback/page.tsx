@@ -53,8 +53,11 @@ export default function SSOCallbackPage() {
       }
 
       try {
+        const liveSignIn = clerk.client?.signIn
+        const liveSignUp = clerk.client?.signUp
+
         // New OAuth user — Clerk transferred us to a sign-up. Complete it first.
-        if (signIn.isTransferable && !signUp.createdSessionId) {
+        if (liveSignIn?.__internal_future?.isTransferable && !liveSignUp?.createdSessionId) {
           const { error: createErr } = await signUp.create({ transfer: true })
           if (createErr) {
             setError(extractError(createErr))
@@ -62,27 +65,13 @@ export default function SSOCallbackPage() {
           }
         }
 
-        // Prefer finalizing whichever flow actually produced a session.
-        if (signUp.status === 'complete' && signUp.createdSessionId) {
-          const { error: finErr } = await signUp.finalize({
-            navigate: async (to) => go(typeof to === 'string' ? to : '/dashboard'),
-          })
-          if (finErr) {
-            setError(extractError(finErr))
-            return
-          }
-          go('/dashboard')
-          return
-        }
+        // Prefer activating whichever flow actually produced a session.
+        const sessionId =
+          clerk.client?.signUp?.createdSessionId ||
+          clerk.client?.signIn?.createdSessionId
 
-        if (signIn.status === 'complete' && signIn.createdSessionId) {
-          const { error: finErr } = await signIn.finalize({
-            navigate: async (to) => go(typeof to === 'string' ? to : '/dashboard'),
-          })
-          if (finErr) {
-            setError(extractError(finErr))
-            return
-          }
+        if (sessionId) {
+          await clerk.setActive({ session: sessionId })
           go('/dashboard')
           return
         }
@@ -93,7 +82,6 @@ export default function SSOCallbackPage() {
           return
         }
 
-        // Nothing to finalize but we're also not signed in — send to sign-in.
         setError('We could not complete sign-in. Please try again.')
       } catch (err) {
         setError(extractError(err))

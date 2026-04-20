@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useSignUp } from '@clerk/nextjs'
+import { useSignUp, useClerk } from '@clerk/nextjs'
 import { isClerkAPIResponseError } from '@clerk/nextjs/errors'
 import {
   AuthShell,
@@ -25,6 +25,7 @@ function extractError(err: unknown): string {
 
 export default function SignUpPage() {
   const { signUp, fetchStatus } = useSignUp()
+  const clerk = useClerk()
   const router = useRouter()
 
   const [email, setEmail] = useState('')
@@ -47,6 +48,8 @@ export default function SignUpPage() {
     setSubmitting(true)
 
     try {
+      await signUp.reset().catch(() => {})
+
       const createRes = await signUp.password({ emailAddress: email, password })
       if (createRes?.error) {
         setError(extractError(createRes.error))
@@ -80,15 +83,15 @@ export default function SignUpPage() {
         return
       }
 
-      const finalizeRes = await signUp.finalize({
-        navigate: async (to) => {
-          router.push(typeof to === 'string' ? to : '/dashboard')
-        },
-      })
-      if (finalizeRes?.error) {
-        setError(extractError(finalizeRes.error))
+      const createdSessionId = clerk.client?.signUp?.createdSessionId
+      const status = clerk.client?.signUp?.status
+
+      if (status !== 'complete' || !createdSessionId) {
+        setError('Verification succeeded but sign-up could not complete. Please try again.')
         return
       }
+
+      await clerk.setActive({ session: createdSessionId })
       router.push('/dashboard')
     } catch (err) {
       setError(extractError(err))

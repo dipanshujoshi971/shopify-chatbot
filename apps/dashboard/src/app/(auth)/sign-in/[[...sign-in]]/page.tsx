@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useSignIn } from '@clerk/nextjs'
+import { useSignIn, useClerk } from '@clerk/nextjs'
 import { isClerkAPIResponseError } from '@clerk/nextjs/errors'
 import {
   AuthShell,
@@ -25,6 +25,7 @@ function extractError(err: unknown): string {
 
 export default function SignInPage() {
   const { signIn, fetchStatus } = useSignIn()
+  const clerk = useClerk()
   const router = useRouter()
 
   const [email, setEmail] = useState('')
@@ -41,20 +42,26 @@ export default function SignInPage() {
     setSubmitting(true)
 
     try {
+      // Reset any stale state from a prior attempt/session.
+      await signIn.reset().catch(() => {})
+
       const res = await signIn.password({ identifier: email, password })
       if (res?.error) {
         setError(extractError(res.error))
         return
       }
-      const finalizeRes = await signIn.finalize({
-        navigate: async (to) => {
-          router.push(typeof to === 'string' ? to : '/dashboard')
-        },
-      })
-      if (finalizeRes?.error) {
-        setError(extractError(finalizeRes.error))
+
+      // Read the freshly-created session directly from the live client
+      // (the React proxy can lag after signout).
+      const createdSessionId = clerk.client?.signIn?.createdSessionId
+      const status = clerk.client?.signIn?.status
+
+      if (status !== 'complete' || !createdSessionId) {
+        setError('Additional verification is required to complete sign-in.')
         return
       }
+
+      await clerk.setActive({ session: createdSessionId })
       router.push('/dashboard')
     } catch (err) {
       setError(extractError(err))
