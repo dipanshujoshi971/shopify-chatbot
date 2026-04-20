@@ -510,7 +510,7 @@ export default async function LandingPage() {
                   SIGN IN
                 </Link>
                 <PillBtn href="/sign-up">
-                  Install on Shopify <ArrowRight className="h-3.5 w-3.5" />
+                  Sign up <ArrowRight className="h-3.5 w-3.5" />
                 </PillBtn>
               </>
             )}
@@ -971,9 +971,9 @@ export default async function LandingPage() {
             },
             {
               icon: MessageCircle,
-              label: 'Live chat',
-              value: 'Talk to Sifu',
-              sub: 'The widget, right here on this page',
+              label: 'See it in action',
+              value: 'Preview the widget',
+              sub: 'Scroll up to see how Sifu chats with your shoppers',
               href: '#widget',
               tone: 'sunset' as const,
             },
@@ -1070,7 +1070,7 @@ export default async function LandingPage() {
             </p>
             <div className="flex flex-wrap justify-center gap-3">
               <PillBtn href={isSignedIn ? '/dashboard' : '/sign-up'} light large>
-                {isSignedIn ? 'Open dashboard' : `Install Free on Shopify`}
+                {isSignedIn ? 'Open dashboard' : 'Sign up — it\u2019s free'}
                 <ArrowRight className="h-4 w-4" />
               </PillBtn>
               <PillBtn href="mailto:support@shopsifu.com" large ghost>
