@@ -42,7 +42,13 @@ export default function SignInPage() {
     setSubmitting(true)
 
     try {
-      // Reset any stale state from a prior attempt/session.
+      // If a previous session is still hanging around on the client, nuke it
+      // before starting a new attempt — otherwise Clerk reuses the stale
+      // signIn resource and fails with "Cannot finalize sign-in without a
+      // created session".
+      if (clerk.session) {
+        await clerk.signOut().catch(() => {})
+      }
       await signIn.reset().catch(() => {})
 
       const res = await signIn.password({ identifier: email, password })
@@ -75,6 +81,10 @@ export default function SignInPage() {
     setError(null)
     setOauthLoading(true)
     try {
+      if (clerk.session) {
+        await clerk.signOut().catch(() => {})
+      }
+      await signIn.reset().catch(() => {})
       await signIn.sso({
         strategy: 'oauth_google',
         redirectUrl: '/sso-callback',

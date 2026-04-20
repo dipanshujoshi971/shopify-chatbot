@@ -48,6 +48,9 @@ export default function SignUpPage() {
     setSubmitting(true)
 
     try {
+      if (clerk.session) {
+        await clerk.signOut().catch(() => {})
+      }
       await signUp.reset().catch(() => {})
 
       const createRes = await signUp.password({ emailAddress: email, password })
@@ -121,6 +124,10 @@ export default function SignUpPage() {
     setError(null)
     setOauthLoading(true)
     try {
+      if (clerk.session) {
+        await clerk.signOut().catch(() => {})
+      }
+      await signUp.reset().catch(() => {})
       await signUp.sso({
         strategy: 'oauth_google',
         redirectUrl: '/sso-callback',
