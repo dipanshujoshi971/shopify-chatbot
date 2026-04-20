@@ -23,6 +23,26 @@ function extractError(err: unknown): string {
   return 'Something went wrong. Please try again.'
 }
 
+type MfaStrategy = 'email_code' | 'phone_code'
+
+type MfaContext = {
+  strategy: MfaStrategy
+  destination: string
+  // 'client_trust' for new-device challenge, 'mfa' for user-enabled MFA
+  reason: 'client_trust' | 'mfa'
+}
+
+function pickSecondFactor(
+  supported: ReadonlyArray<{ strategy: string; safeIdentifier?: string | null }> | undefined,
+): { strategy: MfaStrategy; destination: string } | null {
+  if (!supported?.length) return null
+  const email = supported.find((f) => f.strategy === 'email_code')
+  if (email) return { strategy: 'email_code', destination: email.safeIdentifier ?? 'your email' }
+  const phone = supported.find((f) => f.strategy === 'phone_code')
+  if (phone) return { strategy: 'phone_code', destination: phone.safeIdentifier ?? 'your phone' }
+  return null
+}
+
 export default function SignInPage() {
   const { signIn, fetchStatus } = useSignIn()
   const clerk = useClerk()
@@ -35,6 +55,38 @@ export default function SignInPage() {
   const [submitting, setSubmitting] = useState(false)
   const [oauthLoading, setOauthLoading] = useState(false)
 
+  const [step, setStep] = useState<'form' | 'mfa'>('form')
+  const [mfa, setMfa] = useState<MfaContext | null>(null)
+  const [mfaCode, setMfaCode] = useState('')
+  const [resent, setResent] = useState(false)
+
+  const busy = submitting || fetchStatus === 'fetching'
+
+  const finalizeSession = async (): Promise<boolean> => {
+    const createdSessionId = clerk.client?.signIn?.createdSessionId
+    const status = clerk.client?.signIn?.status
+    if (status !== 'complete' || !createdSessionId) return false
+    await clerk.setActive({ session: createdSessionId })
+    router.push('/dashboard')
+    return true
+  }
+
+  const sendSecondFactor = async (strategy: MfaStrategy) => {
+    const res =
+      strategy === 'email_code'
+        ? await signIn.mfa.sendEmailCode()
+        : await signIn.mfa.sendPhoneCode()
+    if (res?.error) throw res.error
+  }
+
+  const verifySecondFactor = async (strategy: MfaStrategy, code: string) => {
+    const res =
+      strategy === 'email_code'
+        ? await signIn.mfa.verifyEmailCode({ code })
+        : await signIn.mfa.verifyPhoneCode({ code })
+    if (res?.error) throw res.error
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (submitting) return
@@ -42,10 +94,6 @@ export default function SignInPage() {
     setSubmitting(true)
 
     try {
-      // If a previous session is still hanging around on the client, nuke it
-      // before starting a new attempt — otherwise Clerk reuses the stale
-      // signIn resource and fails with "Cannot finalize sign-in without a
-      // created session".
       if (clerk.session) {
         await clerk.signOut().catch(() => {})
       }
@@ -57,22 +105,69 @@ export default function SignInPage() {
         return
       }
 
-      // Read the freshly-created session directly from the live client
-      // (the React proxy can lag after signout).
-      const createdSessionId = clerk.client?.signIn?.createdSessionId
-      const status = clerk.client?.signIn?.status
+      const live = clerk.client?.signIn
+      const status = live?.status
 
-      if (status !== 'complete' || !createdSessionId) {
-        setError('Additional verification is required to complete sign-in.')
+      if (status === 'complete') {
+        if (await finalizeSession()) return
+      }
+
+      if (status === 'needs_client_trust' || status === 'needs_second_factor') {
+        const picked = pickSecondFactor(live?.supportedSecondFactors)
+        if (!picked) {
+          setError('Additional verification is required, but no supported method is available.')
+          return
+        }
+        try {
+          await sendSecondFactor(picked.strategy)
+        } catch (sendErr) {
+          setError(extractError(sendErr))
+          return
+        }
+        setMfa({
+          ...picked,
+          reason: status === 'needs_client_trust' ? 'client_trust' : 'mfa',
+        })
+        setMfaCode('')
+        setStep('mfa')
         return
       }
 
-      await clerk.setActive({ session: createdSessionId })
-      router.push('/dashboard')
+      setError('Sign-in could not be completed. Please try again.')
     } catch (err) {
       setError(extractError(err))
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleMfaVerify = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (submitting || !mfa) return
+    setError(null)
+    setSubmitting(true)
+    try {
+      await verifySecondFactor(mfa.strategy, mfaCode)
+      if (!(await finalizeSession())) {
+        setError('Verification succeeded but sign-in could not complete. Please try again.')
+      }
+    } catch (err) {
+      setError(extractError(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleMfaResend = async () => {
+    if (!mfa) return
+    setError(null)
+    setResent(false)
+    try {
+      await sendSecondFactor(mfa.strategy)
+      setResent(true)
+      setTimeout(() => setResent(false), 4000)
+    } catch (err) {
+      setError(extractError(err))
     }
   }
 
@@ -96,7 +191,79 @@ export default function SignInPage() {
     }
   }
 
-  const busy = submitting || fetchStatus === 'fetching'
+  if (step === 'mfa' && mfa) {
+    const isClientTrust = mfa.reason === 'client_trust'
+    return (
+      <AuthShell
+        eyebrow={isClientTrust ? 'Verify This Device' : 'Two-Factor Auth'}
+        title={
+          <>
+            One more <span className="sifu-chrome">check.</span>
+          </>
+        }
+        subtitle={
+          <>
+            {isClientTrust
+              ? 'New device detected. We sent a verification code to '
+              : 'Enter the verification code we sent to '}
+            <span style={{ color: '#7df9ff' }}>{mfa.destination}</span>
+          </>
+        }
+        footer={
+          <>
+            Didn&apos;t get it?{' '}
+            <button
+              type="button"
+              onClick={handleMfaResend}
+              className="font-semibold transition-colors"
+              style={{ color: '#7df9ff' }}
+            >
+              Resend code
+            </button>
+            {resent && (
+              <span className="ml-2" style={{ color: '#3ddc84' }}>
+                ✓ Sent
+              </span>
+            )}
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  await signIn.reset().catch(() => {})
+                  setStep('form')
+                  setMfa(null)
+                  setMfaCode('')
+                  setError(null)
+                }}
+                className="sifu-mono text-[10.5px] uppercase transition-colors"
+                style={{ color: '#6b7796', letterSpacing: '0.16em' }}
+              >
+                ← Back to sign in
+              </button>
+            </div>
+          </>
+        }
+      >
+        <AuthError message={error} />
+        <form onSubmit={handleMfaVerify} className="space-y-4">
+          <AuthField
+            id="mfa-code"
+            label="Verification code"
+            type="text"
+            value={mfaCode}
+            onChange={(v) => setMfaCode(v.replace(/\D/g, '').slice(0, 6))}
+            placeholder="123456"
+            autoComplete="one-time-code"
+            disabled={busy}
+            required
+          />
+          <AuthSubmit loading={busy} disabled={mfaCode.length < 6}>
+            {busy ? 'Verifying…' : 'Verify & continue'}
+          </AuthSubmit>
+        </form>
+      </AuthShell>
+    )
+  }
 
   return (
     <AuthShell
